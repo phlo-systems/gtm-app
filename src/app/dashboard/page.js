@@ -137,6 +137,9 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   const isDraft = isNew || deal?.status === "draft";
   const [saving, setSaving] = useState(false);
   const [costMatrix, setCostMatrix] = useState(null);
+  const [editedAmounts, setEditedAmounts] = useState({});
+  const [newLines, setNewLines] = useState([]);
+  const [costDirty, setCostDirty] = useState(false);
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
     trade_type: deal?.trade_type || "cross_border_direct",
@@ -181,10 +184,50 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
     try {
       const res = await fetch("/api/deals/" + deal.id + "/cost-matrix", { method: "POST" });
       const data = await res.json();
-      if (res.ok) { setCostMatrix({ ...data.matrix, cost_lines: data.cost_lines }); setStep(2); }
+      if (res.ok) { setCostMatrix({ ...data.matrix, cost_lines: data.cost_lines }); setEditedAmounts({}); setNewLines([]); setCostDirty(false); setStep(2); }
       else alert(data.error || "Failed");
     } catch (err) { alert("Error: " + err.message); }
     setSaving(false);
+  };
+
+  const saveCostMatrix = async () => {
+    if (!deal?.id || !costMatrix?.id) return;
+    setSaving(true);
+    try {
+      const updates = Object.entries(editedAmounts).map(([id, amount]) => ({ id, amount }));
+      const payload = { matrix_id: costMatrix.id, updates, new_lines: newLines };
+      const res = await fetch("/api/deals/" + deal.id + "/cost-matrix", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCostMatrix(updated);
+        setEditedAmounts({});
+        setNewLines([]);
+        setCostDirty(false);
+      } else { const d = await res.json(); alert(d.error || "Failed to save"); }
+    } catch (err) { alert("Error: " + err.message); }
+    setSaving(false);
+  };
+
+  const updateLineAmount = (lineId, value) => {
+    setEditedAmounts(prev => ({ ...prev, [lineId]: value }));
+    setCostDirty(true);
+  };
+
+  const addNewLine = () => {
+    setNewLines(prev => [...prev, { line_item: "", amount: 0, block: "D", responsibility: "Trader" }]);
+    setCostDirty(true);
+  };
+
+  const updateNewLine = (index, field, value) => {
+    setNewLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l));
+    setCostDirty(true);
+  };
+
+  const removeNewLine = (index) => {
+    setNewLines(prev => prev.filter((_, i) => i !== index));
+    setCostDirty(newLines.length > 1 || Object.keys(editedAmounts).length > 0);
   };
 
   const doAction = async (action) => {
@@ -281,22 +324,75 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Cost Matrix</div>
-                <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: "#888" }}>Total COS</div><div style={{ fontSize: 20, fontWeight: 800, color: "#1B4332" }}>${(costMatrix.total_cost || 0).toLocaleString()}</div></div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Cost Matrix {costDirty && <span style={{ fontSize: 11, color: "#D4A017", marginLeft: 8 }}>{"\u25CF"} unsaved changes</span>}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {isDraft && costDirty && <button style={{ ...S.btn(true), background: "#D4A017" }} onClick={saveCostMatrix} disabled={saving}>{saving ? "Saving..." : "Save Changes"}</button>}
+                  {isDraft && <button style={S.btn(false)} onClick={addNewLine}>+ Add Cost</button>}
+                  <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: "#888" }}>Total COS</div><div style={{ fontSize: 20, fontWeight: 800, color: "#1B4332" }}>${(() => {
+                    const existingTotal = (costMatrix.cost_lines || []).reduce((s, l) => s + (l.is_active ? (editedAmounts[l.id] !== undefined ? parseFloat(editedAmounts[l.id]) || 0 : l.amount || 0) : 0), 0);
+                    const newTotal = newLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+                    return (existingTotal + newTotal).toLocaleString();
+                  })()}</div></div>
+                </div>
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><th style={{ ...S.th, width: 40 }}>Blk</th><th style={S.th}>Cost Line</th><th style={S.th}>Type</th><th style={{ ...S.th, textAlign: "right" }}>Amount</th><th style={S.th}>Resp.</th></tr></thead>
-                <tbody>{(costMatrix.cost_lines || []).sort((a, b) => a.sort_order - b.sort_order).map((c, i) => (
-                  <tr key={i}>
-                    <td style={{ ...S.td, fontWeight: 700, color: c.block === "A" ? "#1B7A43" : c.block === "B" ? "#D4A017" : "#6B2D5B" }}>{c.block}</td>
-                    <td style={{ ...S.td, fontWeight: c.block === "A" ? 700 : 400 }}>{c.line_item}</td>
-                    <td style={S.td}><span style={S.badge(c.cost_type === "base" ? "#1B7A43" : c.cost_type === "incoterm_gap" ? "#D4A017" : "#6B2D5B")}>{c.cost_type.replace("_", " ")}</span></td>
-                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>${(c.amount || 0).toLocaleString()}</td>
-                    <td style={S.td}>{c.responsibility}</td>
-                  </tr>
-                ))}</tbody>
+                <thead><tr><th style={{ ...S.th, width: 40 }}>Blk</th><th style={S.th}>Cost Line</th><th style={S.th}>Type</th><th style={{ ...S.th, textAlign: "right", width: 140 }}>Amount</th><th style={S.th}>Resp.</th></tr></thead>
+                <tbody>
+                  {(costMatrix.cost_lines || []).sort((a, b) => a.sort_order - b.sort_order).map((c, i) => {
+                    const blockColor = c.block === "A" ? "#1B7A43" : c.block === "B" ? "#D4A017" : c.block === "D" ? "#13B5EA" : "#6B2D5B";
+                    const typeColor = c.cost_type === "base" ? "#1B7A43" : c.cost_type === "incoterm_gap" ? "#D4A017" : c.cost_type === "additional" ? "#13B5EA" : "#6B2D5B";
+                    return (
+                      <tr key={c.id || i} style={{ opacity: c.is_active === false ? 0.4 : 1 }}>
+                        <td style={{ ...S.td, fontWeight: 700, color: blockColor }}>{c.block}</td>
+                        <td style={{ ...S.td, fontWeight: c.block === "A" ? 700 : 400 }}>{c.line_item}</td>
+                        <td style={S.td}><span style={S.badge(typeColor)}>{(c.cost_type || "").replace("_", " ")}</span></td>
+                        <td style={{ ...S.td, textAlign: "right" }}>
+                          {isDraft ? (
+                            <input
+                              type="number" step="0.01"
+                              style={{ width: 110, padding: "4px 8px", border: editedAmounts[c.id] !== undefined ? "2px solid #D4A017" : "1px solid #D5D0C6", borderRadius: 4, fontSize: 13, fontFamily: "monospace", textAlign: "right", outline: "none", background: editedAmounts[c.id] !== undefined ? "#FFFDE7" : "#FAFAF8" }}
+                              value={editedAmounts[c.id] !== undefined ? editedAmounts[c.id] : c.amount || 0}
+                              onChange={(e) => updateLineAmount(c.id, e.target.value)}
+                            />
+                          ) : (
+                            <span style={{ fontFamily: "monospace" }}>${(c.amount || 0).toLocaleString()}</span>
+                          )}
+                        </td>
+                        <td style={S.td}>{c.responsibility}</td>
+                      </tr>
+                    );
+                  })}
+                  {newLines.map((nl, i) => (
+                    <tr key={"new-" + i} style={{ background: "#F0FFF4" }}>
+                      <td style={{ ...S.td, fontWeight: 700, color: "#13B5EA" }}>D</td>
+                      <td style={S.td}>
+                        <input
+                          style={{ ...S.input, padding: "4px 8px", fontSize: 13, border: "1px solid #B8D4F0", background: "#F0F7FF" }}
+                          placeholder="Cost description..."
+                          value={nl.line_item}
+                          onChange={(e) => updateNewLine(i, "line_item", e.target.value)}
+                        />
+                      </td>
+                      <td style={S.td}><span style={S.badge("#13B5EA")}>additional</span></td>
+                      <td style={{ ...S.td, textAlign: "right" }}>
+                        <input
+                          type="number" step="0.01"
+                          style={{ width: 110, padding: "4px 8px", border: "1px solid #B8D4F0", borderRadius: 4, fontSize: 13, fontFamily: "monospace", textAlign: "right", outline: "none", background: "#F0F7FF" }}
+                          placeholder="0.00"
+                          value={nl.amount || ""}
+                          onChange={(e) => updateNewLine(i, "amount", e.target.value)}
+                        />
+                      </td>
+                      <td style={{ ...S.td, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12 }}>Trader</span>
+                        <button onClick={() => removeNewLine(i)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#C62828", padding: 2 }}>{"\u2715"}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
+              {isDraft && <div style={{ marginTop: 12, fontSize: 11, color: "#AAA" }}>Click any amount to edit. Use "+ Add Cost" for additional line items. Changes are saved when you click "Save Changes".</div>}
             </>
           )}
         </div>
@@ -308,11 +404,12 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
           {costMatrix ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div>
-                {[{ l: "Supplier (A)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="A").reduce((s,l)=>s+l.amount,0) },
-                  { l: "Incoterm Gap (B)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="B").reduce((s,l)=>s+l.amount,0) },
-                  { l: "Business Charges (C)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="C").reduce((s,l)=>s+l.amount,0) },
-                  { l: "Total COS", v: costMatrix.total_cost || 0, bold: true }
-                ].map((r,i) => (
+                {[{ l: "Supplier (A)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="A").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
+                  { l: "Incoterm Gap (B)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="B").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
+                  { l: "Business Charges (C)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="C").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
+                  { l: "Additional Costs (D)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="D").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0) },
+                  { l: "Total COS", v: (costMatrix.cost_lines||[]).filter(l=>l.is_active!==false).reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0), bold: true }
+                ].filter(r => r.v > 0 || r.bold).map((r,i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: r.bold ? "2px solid #1B4332" : "1px solid #F0EDE6" }}>
                     <span style={{ fontSize: 13, fontWeight: r.bold ? 700 : 400 }}>{r.l}</span>
                     <span style={{ fontFamily: "monospace", fontWeight: r.bold ? 800 : 600 }}>${r.v.toLocaleString()}</span>
