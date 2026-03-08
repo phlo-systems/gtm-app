@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { useRouter } from "next/navigation";
 import { calculateIncotermGap, INCOTERMS_2020 } from "@/lib/incoterms";
@@ -18,6 +18,216 @@ const S = {
 };
 const statusColor = { draft: "#888", submitted: "#D4A017", approved: "#1B7A43", rejected: "#C62828" };
 
+/* ── ComboBox: searchable dropdown with "create new" option ── */
+function ComboBox({ label, value, options, onSelect, onCreate, disabled, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
+  const exactMatch = options.some(o => o.name.toLowerCase() === search.toLowerCase());
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>{label}</label>
+      <input
+        style={{ ...S.input, background: disabled ? "#F0EDE6" : "#FFF", borderColor: open ? "#1B4332" : "#D5D0C6" }}
+        readOnly={disabled}
+        placeholder={placeholder || "Search or type new..."}
+        value={open ? search : value || ""}
+        onFocus={() => { if (!disabled) { setOpen(true); setSearch(value || ""); } }}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      {open && !disabled && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#FFF", border: "1px solid #D5D0C6", borderRadius: "0 0 6px 6px", maxHeight: 180, overflowY: "auto", zIndex: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
+          {filtered.map((o) => (
+            <div key={o.id} onClick={() => { onSelect(o); setOpen(false); setSearch(""); }}
+              style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", borderBottom: "1px solid #F0EDE6" }}
+              onMouseOver={(e) => e.target.style.background = "#F0FFF4"}
+              onMouseOut={(e) => e.target.style.background = "#FFF"}>
+              <div style={{ fontWeight: 600 }}>{o.name}</div>
+              {o.country && <div style={{ fontSize: 10, color: "#888" }}>{o.country}{o.hs_code ? " \u2022 HS " + o.hs_code : ""}</div>}
+              {o.hs_code && !o.country && <div style={{ fontSize: 10, color: "#888" }}>HS {o.hs_code}</div>}
+            </div>
+          ))}
+          {search.trim() && !exactMatch && (
+            <div onClick={() => { onCreate(search.trim()); setOpen(false); setSearch(""); }}
+              style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", background: "#F0F7FF", color: "#1B4332", fontWeight: 600, borderTop: "1px solid #B8D4F0" }}>
+              + Create new: &ldquo;{search.trim()}&rdquo;
+            </div>
+          )}
+          {filtered.length === 0 && !search.trim() && (
+            <div style={{ padding: "8px 12px", fontSize: 12, color: "#AAA" }}>No items yet. Type to create.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Trade Route Map (Leaflet) ── */
+function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, transportMode }) {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const [status, setStatus] = useState("loading");
+
+  useEffect(() => {
+    if (!buyLocation || !sellLocation) { setStatus("no-locations"); return; }
+
+    // Load Leaflet CSS + JS
+    if (!document.getElementById("leaflet-css")) {
+      const link = document.createElement("link");
+      link.id = "leaflet-css";
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(link);
+    }
+
+    const loadLeaflet = () => {
+      return new Promise((resolve) => {
+        if (window.L) return resolve(window.L);
+        const script = document.createElement("script");
+        script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+        script.onload = () => resolve(window.L);
+        document.head.appendChild(script);
+      });
+    };
+
+    const geocode = async (place) => {
+      try {
+        const res = await fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(place) + "&limit=1");
+        const data = await res.json();
+        if (data.length > 0) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+      } catch {}
+      return null;
+    };
+
+    const buyLevel = { EXW: 0, FCA: 1, FAS: 2, FOB: 3, CFR: 5, CIF: 6, CPT: 5, CIP: 6, DAP: 8, DPU: 9, DDP: 10 }[buyIncoterm] || 0;
+    const sellLevel = { EXW: 0, FCA: 1, FAS: 2, FOB: 3, CFR: 5, CIF: 6, CPT: 5, CIP: 6, DAP: 8, DPU: 9, DDP: 10 }[sellIncoterm] || 0;
+
+    const init = async () => {
+      setStatus("loading");
+      const L = await loadLeaflet();
+      const [buyCoords, sellCoords] = await Promise.all([geocode(buyLocation), geocode(sellLocation)]);
+
+      if (!buyCoords || !sellCoords) { setStatus("geo-fail"); return; }
+
+      if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; }
+      if (!mapRef.current) return;
+
+      const map = L.map(mapRef.current, { scrollWheelZoom: false, attributionControl: false });
+      mapInstance.current = map;
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "\u00a9 OpenStreetMap" }).addTo(map);
+
+      const supplierIcon = L.divIcon({ className: "", html: '<div style="background:#1B4332;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">\u{1F3ED} ' + buyLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
+      const customerIcon = L.divIcon({ className: "", html: '<div style="background:#C62828;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">\u{1F464} ' + sellLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
+
+      L.marker(buyCoords, { icon: supplierIcon }).addTo(map);
+      L.marker(sellCoords, { icon: customerIcon }).addTo(map);
+
+      // Determine transport segments based on incoterms
+      const isOcean = transportMode === "ocean" || !transportMode;
+      const segments = [];
+
+      if (isOcean && sellLevel >= 3) {
+        // Truck from supplier to port
+        if (buyLevel < 3) {
+          segments.push({ from: buyCoords, to: buyCoords, type: "truck_origin", label: "\u{1F69A} Truck (Origin)" });
+        }
+        // Ocean freight between ports
+        if (sellLevel >= 5) {
+          segments.push({ from: buyCoords, to: sellCoords, type: "ocean", label: "\u{1F6A2} Ocean Freight" });
+        }
+        // Truck from port to customer
+        if (sellLevel >= 8) {
+          segments.push({ from: sellCoords, to: sellCoords, type: "truck_dest", label: "\u{1F69A} Truck (Dest)" });
+        }
+      }
+
+      // Draw the main route
+      const routeLine = L.polyline([buyCoords, sellCoords], {
+        color: isOcean ? "#1565C0" : "#E65100",
+        weight: 3,
+        dashArray: isOcean ? "10 6" : "8 4",
+        opacity: 0.8,
+      }).addTo(map);
+
+      // Add transport mode labels at midpoint
+      const midLat = (buyCoords[0] + sellCoords[0]) / 2;
+      const midLng = (buyCoords[1] + sellCoords[1]) / 2;
+      const modeLabel = isOcean ? "\u{1F6A2} Ocean" : transportMode === "road" ? "\u{1F69A} Road" : "\u2708\uFE0F Air";
+      const modeColor = isOcean ? "#1565C0" : transportMode === "road" ? "#E65100" : "#6A1B9A";
+
+      L.marker([midLat, midLng], {
+        icon: L.divIcon({
+          className: "",
+          html: '<div style="background:' + modeColor + ';color:#FFF;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 8px rgba(0,0,0,0.3)">' + modeLabel + '</div>',
+          iconSize: [0, 0], iconAnchor: [40, 12],
+        })
+      }).addTo(map);
+
+      // Draw origin inland segment if applicable
+      if (buyLevel < 3 && isOcean) {
+        const offsetBuy = [buyCoords[0] + 0.5, buyCoords[1] + 0.5];
+        L.polyline([buyCoords, offsetBuy], { color: "#E65100", weight: 3, opacity: 0.6 }).addTo(map);
+        L.marker(buyCoords, {
+          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">\u{1F69A} Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
+        }).addTo(map);
+      }
+
+      // Draw destination inland segment if applicable
+      if (sellLevel >= 8 && isOcean) {
+        const offsetSell = [sellCoords[0] - 0.5, sellCoords[1] - 0.5];
+        L.polyline([offsetSell, sellCoords], { color: "#E65100", weight: 3, opacity: 0.6 }).addTo(map);
+        L.marker(sellCoords, {
+          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">\u{1F69A} Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
+        }).addTo(map);
+      }
+
+      // Add incoterm labels
+      L.marker(buyCoords, {
+        icon: L.divIcon({ className: "", html: '<div style="background:#FFF;color:#1B4332;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;border:1px solid #1B4332;margin-top:-28px">Buy: ' + (buyIncoterm || "FOB") + '</div>', iconSize: [0, 0], iconAnchor: [-8, 24] })
+      }).addTo(map);
+
+      L.marker(sellCoords, {
+        icon: L.divIcon({ className: "", html: '<div style="background:#FFF;color:#C62828;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;border:1px solid #C62828;margin-top:-28px">Sell: ' + (sellIncoterm || "CIF") + '</div>', iconSize: [0, 0], iconAnchor: [-8, 24] })
+      }).addTo(map);
+
+      map.fitBounds([buyCoords, sellCoords], { padding: [60, 60] });
+      setStatus("ready");
+    };
+
+    init();
+
+    return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; } };
+  }, [buyLocation, sellLocation, buyIncoterm, sellIncoterm, transportMode]);
+
+  if (!buyLocation || !sellLocation) {
+    return <div style={{ background: "#F5F5F5", borderRadius: 8, padding: 32, textAlign: "center", color: "#AAA", fontSize: 13 }}>Enter supplier and customer locations in the Deal Sheet to see the trade route map.</div>;
+  }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <div ref={mapRef} style={{ height: 320, borderRadius: 8, border: "1px solid #E8E4DC" }} />
+      {status === "loading" && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#FFF", padding: "8px 16px", borderRadius: 6, fontSize: 12, color: "#888", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>Loading map...</div>}
+      {status === "geo-fail" && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#FFF5F5", padding: "8px 16px", borderRadius: 6, fontSize: 12, color: "#C62828" }}>Could not geocode locations. Try more specific place names.</div>}
+      <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center" }}>
+        <span style={{ fontSize: 10, color: "#888" }}><span style={{ display: "inline-block", width: 20, height: 3, background: "#1565C0", verticalAlign: "middle", marginRight: 4, borderTop: "2px dashed #1565C0" }} /> Ocean</span>
+        <span style={{ fontSize: 10, color: "#888" }}><span style={{ display: "inline-block", width: 20, height: 3, background: "#E65100", verticalAlign: "middle", marginRight: 4 }} /> Inland/Road</span>
+        <span style={{ fontSize: 10, color: "#888" }}>\u{1F3ED} Supplier</span>
+        <span style={{ fontSize: 10, color: "#888" }}>\u{1F464} Customer</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Sidebar ── */
 function Sidebar({ active, onNav, user, onLogout }) {
   const items = [
     { key: "dashboard", icon: "\u25FB", label: "Dashboard" },
@@ -141,22 +351,36 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   const [newLines, setNewLines] = useState([]);
   const [costDirty, setCostDirty] = useState(false);
   const [step, setStep] = useState(1);
+  const [customers, setCustomers] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [products, setProducts] = useState([]);
   const [form, setForm] = useState({
     trade_type: deal?.trade_type || "cross_border_direct",
     transport_mode: deal?.transport_mode || "ocean",
+    customer_id: deal?.customer_id || null,
     customer_name: deal?.customer?.name || "",
+    supplier_id: deal?.supplier_id || null,
     supplier_name: deal?.supplier?.name || "",
+    product_id: deal?.product_id || null,
+    product_name: deal?.product?.name || "",
     buy_incoterm: deal?.buy_incoterm || "FOB",
     buy_location: deal?.buy_location || "",
     sell_incoterm: deal?.sell_incoterm || "CIF",
     sell_location: deal?.sell_location || "",
     unit_price: deal?.unit_price || "",
-    hs_code: deal?.hs_code || "",
+    hs_code: deal?.hs_code || deal?.product?.hs_code || "",
     cost_currency: deal?.cost_currency || "USD",
     customer_payment_terms: deal?.customer_payment_terms || "Net 60",
   });
   const gap = calculateIncotermGap(form.buy_incoterm, form.sell_incoterm);
   const f = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  // Fetch master data
+  useEffect(() => {
+    fetch("/api/counterparties?type=customer").then(r => r.ok ? r.json() : []).then(setCustomers).catch(() => {});
+    fetch("/api/counterparties?type=supplier").then(r => r.ok ? r.json() : []).then(setSuppliers).catch(() => {});
+    fetch("/api/products").then(r => r.ok ? r.json() : []).then(setProducts).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (deal?.id) {
@@ -172,8 +396,12 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
       const url = deal?.id ? "/api/deals/" + deal.id : "/api/deals";
       const res = await fetch(url, { method: deal?.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       const saved = await res.json();
-      if (res.ok) onSaved(saved);
-      else alert(saved.error || "Failed to save");
+      if (res.ok) {
+        onSaved(saved);
+        // Refresh master data lists after save (new counterparties may have been created)
+        fetch("/api/counterparties?type=customer").then(r => r.ok ? r.json() : []).then(setCustomers).catch(() => {});
+        fetch("/api/counterparties?type=supplier").then(r => r.ok ? r.json() : []).then(setSuppliers).catch(() => {});
+      } else alert(saved.error || "Failed to save");
     } catch (err) { alert("Error: " + err.message); }
     setSaving(false);
   };
@@ -195,40 +423,20 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
     setSaving(true);
     try {
       const updates = Object.entries(editedAmounts).map(([id, amount]) => ({ id, amount }));
-      const payload = { matrix_id: costMatrix.id, updates, new_lines: newLines };
       const res = await fetch("/api/deals/" + deal.id + "/cost-matrix", {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matrix_id: costMatrix.id, updates, new_lines: newLines }),
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setCostMatrix(updated);
-        setEditedAmounts({});
-        setNewLines([]);
-        setCostDirty(false);
-      } else { const d = await res.json(); alert(d.error || "Failed to save"); }
+      if (res.ok) { const updated = await res.json(); setCostMatrix(updated); setEditedAmounts({}); setNewLines([]); setCostDirty(false); }
+      else { const d = await res.json(); alert(d.error || "Failed to save"); }
     } catch (err) { alert("Error: " + err.message); }
     setSaving(false);
   };
 
-  const updateLineAmount = (lineId, value) => {
-    setEditedAmounts(prev => ({ ...prev, [lineId]: value }));
-    setCostDirty(true);
-  };
-
-  const addNewLine = () => {
-    setNewLines(prev => [...prev, { line_item: "", amount: 0, block: "D", responsibility: "Trader" }]);
-    setCostDirty(true);
-  };
-
-  const updateNewLine = (index, field, value) => {
-    setNewLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l));
-    setCostDirty(true);
-  };
-
-  const removeNewLine = (index) => {
-    setNewLines(prev => prev.filter((_, i) => i !== index));
-    setCostDirty(newLines.length > 1 || Object.keys(editedAmounts).length > 0);
-  };
+  const updateLineAmount = (lineId, value) => { setEditedAmounts(prev => ({ ...prev, [lineId]: value })); setCostDirty(true); };
+  const addNewLine = () => { setNewLines(prev => [...prev, { line_item: "", amount: 0, block: "D", responsibility: "Trader" }]); setCostDirty(true); };
+  const updateNewLine = (index, field, value) => { setNewLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l)); setCostDirty(true); };
+  const removeNewLine = (index) => { setNewLines(prev => prev.filter((_, i) => i !== index)); setCostDirty(newLines.length > 1 || Object.keys(editedAmounts).length > 0); };
 
   const doAction = async (action) => {
     if (!deal?.id) return;
@@ -277,12 +485,29 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Trade Type</label><select style={S.select} disabled={!isDraft} value={form.trade_type} onChange={f("trade_type")}><option value="cross_border_direct">Cross-Border (Direct)</option><option value="cross_border_intermediated">Cross-Border (Intermediated)</option><option value="domestic">Domestic</option><option value="transit_reexport">Transit / Re-Export</option></select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Transport</label><select style={S.select} disabled={!isDraft} value={form.transport_mode} onChange={f("transport_mode")}><option value="ocean">Ocean</option><option value="road">Road</option><option value="air">Air</option></select></div>
+              <ComboBox
+                label="Product"
+                value={form.product_name}
+                options={products}
+                disabled={!isDraft}
+                placeholder="Search products..."
+                onSelect={(p) => setForm({ ...form, product_id: p.id, product_name: p.name, hs_code: p.hs_code || form.hs_code })}
+                onCreate={(name) => setForm({ ...form, product_id: null, product_name: name })}
+              />
             </div>
           </div>
           <div style={S.card}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#1B4332", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.5px" }}>Supplier / Origin</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Supplier</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.supplier_name} onChange={f("supplier_name")} placeholder="Supplier name" /></div>
+              <ComboBox
+                label="Supplier"
+                value={form.supplier_name}
+                options={suppliers}
+                disabled={!isDraft}
+                placeholder="Search suppliers..."
+                onSelect={(s) => setForm({ ...form, supplier_id: s.id, supplier_name: s.name, buy_location: s.country || form.buy_location })}
+                onCreate={(name) => setForm({ ...form, supplier_id: null, supplier_name: name })}
+              />
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Buy Incoterm</label><select style={S.select} disabled={!isDraft} value={form.buy_incoterm} onChange={f("buy_incoterm")}>{INCOTERMS_2020.map(t => <option key={t.code} value={t.code}>{t.code} - {t.name}</option>)}</select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Location</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.buy_location} onChange={f("buy_location")} placeholder="e.g. Mumbai" /></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Unit Price ({form.cost_currency})</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.unit_price} onChange={f("unit_price")} type="number" step="0.01" placeholder="0.00" /></div>
@@ -292,7 +517,15 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
           <div style={S.card}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#1B4332", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.5px" }}>Customer / Destination</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Customer</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.customer_name} onChange={f("customer_name")} placeholder="Customer name" /></div>
+              <ComboBox
+                label="Customer"
+                value={form.customer_name}
+                options={customers}
+                disabled={!isDraft}
+                placeholder="Search customers..."
+                onSelect={(c) => setForm({ ...form, customer_id: c.id, customer_name: c.name, sell_location: c.country || form.sell_location })}
+                onCreate={(name) => setForm({ ...form, customer_id: null, customer_name: name })}
+              />
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Sell Incoterm</label><select style={S.select} disabled={!isDraft} value={form.sell_incoterm} onChange={f("sell_incoterm")}>{INCOTERMS_2020.map(t => <option key={t.code} value={t.code}>{t.code} - {t.name}</option>)}</select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Location</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.sell_location} onChange={f("sell_location")} placeholder="e.g. Durban" /></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Currency</label><select style={S.select} disabled={!isDraft} value={form.cost_currency} onChange={f("cost_currency")}><option>USD</option><option>ZAR</option><option>GBP</option><option>EUR</option><option>AED</option></select></div>
@@ -308,7 +541,7 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
           {isNew && !form.customer_name && (
             <div style={{ gridColumn: "1 / -1", background: "#F0F7FF", border: "1px solid #B8D4F0", borderRadius: 8, padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 13 }}>{"\u2139"} Fill in the deal details, then click Save Draft</div>
-              <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>After saving, you can generate the cost matrix which uses the Incoterm Gap Engine to calculate all costs.</div>
+              <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>Select existing customers, suppliers and products from the dropdowns, or type a new name to create one.</div>
             </div>
           )}
         </div>
@@ -349,8 +582,7 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
                         <td style={S.td}><span style={S.badge(typeColor)}>{(c.cost_type || "").replace("_", " ")}</span></td>
                         <td style={{ ...S.td, textAlign: "right" }}>
                           {isDraft ? (
-                            <input
-                              type="number" step="0.01"
+                            <input type="number" step="0.01"
                               style={{ width: 110, padding: "4px 8px", border: editedAmounts[c.id] !== undefined ? "2px solid #D4A017" : "1px solid #D5D0C6", borderRadius: 4, fontSize: 13, fontFamily: "monospace", textAlign: "right", outline: "none", background: editedAmounts[c.id] !== undefined ? "#FFFDE7" : "#FAFAF8" }}
                               value={editedAmounts[c.id] !== undefined ? editedAmounts[c.id] : c.amount || 0}
                               onChange={(e) => updateLineAmount(c.id, e.target.value)}
@@ -366,64 +598,65 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
                   {newLines.map((nl, i) => (
                     <tr key={"new-" + i} style={{ background: "#F0FFF4" }}>
                       <td style={{ ...S.td, fontWeight: 700, color: "#13B5EA" }}>D</td>
-                      <td style={S.td}>
-                        <input
-                          style={{ ...S.input, padding: "4px 8px", fontSize: 13, border: "1px solid #B8D4F0", background: "#F0F7FF" }}
-                          placeholder="Cost description..."
-                          value={nl.line_item}
-                          onChange={(e) => updateNewLine(i, "line_item", e.target.value)}
-                        />
-                      </td>
+                      <td style={S.td}><input style={{ ...S.input, padding: "4px 8px", fontSize: 13, border: "1px solid #B8D4F0", background: "#F0F7FF" }} placeholder="Cost description..." value={nl.line_item} onChange={(e) => updateNewLine(i, "line_item", e.target.value)} /></td>
                       <td style={S.td}><span style={S.badge("#13B5EA")}>additional</span></td>
-                      <td style={{ ...S.td, textAlign: "right" }}>
-                        <input
-                          type="number" step="0.01"
-                          style={{ width: 110, padding: "4px 8px", border: "1px solid #B8D4F0", borderRadius: 4, fontSize: 13, fontFamily: "monospace", textAlign: "right", outline: "none", background: "#F0F7FF" }}
-                          placeholder="0.00"
-                          value={nl.amount || ""}
-                          onChange={(e) => updateNewLine(i, "amount", e.target.value)}
-                        />
-                      </td>
-                      <td style={{ ...S.td, display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ fontSize: 12 }}>Trader</span>
-                        <button onClick={() => removeNewLine(i)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#C62828", padding: 2 }}>{"\u2715"}</button>
-                      </td>
+                      <td style={{ ...S.td, textAlign: "right" }}><input type="number" step="0.01" style={{ width: 110, padding: "4px 8px", border: "1px solid #B8D4F0", borderRadius: 4, fontSize: 13, fontFamily: "monospace", textAlign: "right", outline: "none", background: "#F0F7FF" }} placeholder="0.00" value={nl.amount || ""} onChange={(e) => updateNewLine(i, "amount", e.target.value)} /></td>
+                      <td style={{ ...S.td, display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 12 }}>Trader</span><button onClick={() => removeNewLine(i)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#C62828", padding: 2 }}>{"\u2715"}</button></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {isDraft && <div style={{ marginTop: 12, fontSize: 11, color: "#AAA" }}>Click any amount to edit. Use "+ Add Cost" for additional line items. Changes are saved when you click "Save Changes".</div>}
+              {isDraft && <div style={{ marginTop: 12, fontSize: 11, color: "#AAA" }}>Click any amount to edit. Use "+ Add Cost" for additional line items.</div>}
             </>
           )}
         </div>
       )}
 
       {step === 3 && (
-        <div style={S.card}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Feasibility</div>
-          {costMatrix ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div>
-                {[{ l: "Supplier (A)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="A").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
-                  { l: "Incoterm Gap (B)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="B").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
-                  { l: "Business Charges (C)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="C").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
-                  { l: "Additional Costs (D)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="D").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0) },
-                  { l: "Total COS", v: (costMatrix.cost_lines||[]).filter(l=>l.is_active!==false).reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0), bold: true }
-                ].filter(r => r.v > 0 || r.bold).map((r,i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: r.bold ? "2px solid #1B4332" : "1px solid #F0EDE6" }}>
-                    <span style={{ fontSize: 13, fontWeight: r.bold ? 700 : 400 }}>{r.l}</span>
-                    <span style={{ fontFamily: "monospace", fontWeight: r.bold ? 800 : 600 }}>${r.v.toLocaleString()}</span>
-                  </div>
-                ))}
+        <div>
+          <div style={S.card}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Feasibility</div>
+            {costMatrix ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  {[{ l: "Supplier (A)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="A").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
+                    { l: "Incoterm Gap (B)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="B").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
+                    { l: "Business Charges (C)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="C").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
+                    { l: "Additional Costs (D)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="D").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0) },
+                    { l: "Total COS", v: (costMatrix.cost_lines||[]).filter(l=>l.is_active!==false).reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0), bold: true }
+                  ].filter(r => r.v > 0 || r.bold).map((r,i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: r.bold ? "2px solid #1B4332" : "1px solid #F0EDE6" }}>
+                      <span style={{ fontSize: 13, fontWeight: r.bold ? 700 : 400 }}>{r.l}</span>
+                      <span style={{ fontFamily: "monospace", fontWeight: r.bold ? 800 : 600 }}>${r.v.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: 16, background: (costMatrix.gross_margin_pct||0) >= 8 ? "#F0FFF4" : "#FFF5F5", borderRadius: 8, border: "1px solid " + ((costMatrix.gross_margin_pct||0) >= 8 ? "#C6E6D0" : "#E6C6C6") }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: (costMatrix.gross_margin_pct||0) >= 8 ? "#1B7A43" : "#C62828" }}>{(costMatrix.gross_margin_pct||0).toFixed(1)}%</div>
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{(costMatrix.gross_margin_pct||0) >= 8 ? "\u2713 Margin check passed" : "\u2717 Below threshold (8%)"}</div>
+                </div>
               </div>
-              <div style={{ padding: 16, background: (costMatrix.gross_margin_pct||0) >= 8 ? "#F0FFF4" : "#FFF5F5", borderRadius: 8, border: "1px solid " + ((costMatrix.gross_margin_pct||0) >= 8 ? "#C6E6D0" : "#E6C6C6") }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: (costMatrix.gross_margin_pct||0) >= 8 ? "#1B7A43" : "#C62828" }}>{(costMatrix.gross_margin_pct||0).toFixed(1)}%</div>
-                <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{(costMatrix.gross_margin_pct||0) >= 8 ? "\u2713 Margin check passed" : "\u2717 Below threshold (8%)"}</div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ textAlign: "center", padding: 32, color: "#888" }}>Generate a cost matrix first.</div>
-          )}
+            ) : (
+              <div style={{ textAlign: "center", padding: 32, color: "#888" }}>Generate a cost matrix first.</div>
+            )}
+          </div>
+
+          <div style={S.card}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Trade Route</div>
+            <TradeRouteMap
+              buyLocation={form.buy_location}
+              sellLocation={form.sell_location}
+              buyIncoterm={form.buy_incoterm}
+              sellIncoterm={form.sell_incoterm}
+              transportMode={form.transport_mode}
+            />
+          </div>
+        </div>
+      )}
+
+      {step === 1 && (
+        <div style={{ display: "none" }}>
+          {/* customs and postcalc placeholders */}
         </div>
       )}
     </div>
