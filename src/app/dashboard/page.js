@@ -72,7 +72,7 @@ function ComboBox({ label, value, options, onSelect, onCreate, disabled, placeho
 }
 
 /* ── Trade Route Map (Premium Dark Theme + Freight Estimates) ── */
-function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, transportMode }) {
+function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, transportMode, onFreightLoaded }) {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const [status, setStatus] = useState("loading");
@@ -180,7 +180,7 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
       // Fetch freight estimate
       try {
         const fRes = await fetch("/api/freight-estimate?olat=" + buyCoords[0] + "&olng=" + buyCoords[1] + "&dlat=" + sellCoords[0] + "&dlng=" + sellCoords[1] + "&origin=" + encodeURIComponent(buyLocation) + "&dest=" + encodeURIComponent(sellLocation) + "&mode=" + (transportMode || "ocean"));
-        if (fRes.ok) { const fData = await fRes.json(); setFreight(fData); }
+        if (fRes.ok) { const fData = await fRes.json(); setFreight(fData); if (onFreightLoaded) onFreightLoaded(fData); }
       } catch {}
     };
 
@@ -362,6 +362,9 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   const [newLines, setNewLines] = useState([]);
   const [costDirty, setCostDirty] = useState(false);
   const [step, setStep] = useState(1);
+  const [freightData, setFreightData] = useState(null);
+  const [customsData, setCustomsData] = useState(null);
+  const [customsLoading, setCustomsLoading] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -448,6 +451,49 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   const addNewLine = () => { setNewLines(prev => [...prev, { line_item: "", amount: 0, block: "D", responsibility: "Trader" }]); setCostDirty(true); };
   const updateNewLine = (index, field, value) => { setNewLines(prev => prev.map((l, i) => i === index ? { ...l, [field]: value } : l)); setCostDirty(true); };
   const removeNewLine = (index) => { setNewLines(prev => prev.filter((_, i) => i !== index)); setCostDirty(newLines.length > 1 || Object.keys(editedAmounts).length > 0); };
+
+  const fetchCustomsEstimate = async () => {
+    if (!form.sell_location || !form.hs_code) return;
+    setCustomsLoading(true);
+    try {
+      const cargoValue = (parseFloat(form.unit_price) || 100) * 10000; // rough per-container value
+      const res = await fetch("/api/customs-estimate?hs_code=" + encodeURIComponent(form.hs_code) + "&destination=" + encodeURIComponent(form.sell_location) + "&cargo_value=" + cargoValue);
+      if (res.ok) { const data = await res.json(); setCustomsData(data); }
+      else { const err = await res.json(); alert(err.error || "Could not estimate customs"); }
+    } catch (err) { alert("Error: " + err.message); }
+    setCustomsLoading(false);
+  };
+
+  const applyFreightToCostMatrix = () => {
+    if (!freightData) return;
+    const fe = freightData.estimates;
+    const freightLines = [
+      { line_item: "Ocean Freight (" + freightData.container_type + ")", amount: fe.ocean_freight, block: "B", responsibility: "Trader" },
+      { line_item: "BAF Surcharge", amount: fe.baf_surcharge, block: "B", responsibility: "Trader" },
+      { line_item: "Terminal Handling (THC)", amount: fe.thc_handling, block: "B", responsibility: "Trader" },
+    ];
+    if (fe.origin_inland > 0) freightLines.push({ line_item: "Origin Inland Transport", amount: fe.origin_inland, block: "B", responsibility: "Trader" });
+    if (fe.dest_inland > 0) freightLines.push({ line_item: "Destination Inland Transport", amount: fe.dest_inland, block: "B", responsibility: "Trader" });
+    if (fe.cargo_insurance > 0) freightLines.push({ line_item: "Cargo Insurance", amount: fe.cargo_insurance, block: "B", responsibility: "Trader" });
+    if (fe.documentation > 0) freightLines.push({ line_item: "Freight Documentation", amount: fe.documentation, block: "B", responsibility: "Trader" });
+    setNewLines(prev => [...prev, ...freightLines]);
+    setCostDirty(true);
+    setStep(2);
+  };
+
+  const applyCustomsToCostMatrix = () => {
+    if (!customsData) return;
+    const ce = customsData.estimates;
+    const customsLines = [
+      { line_item: "Import Duty (" + ce.import_duty_rate + "% - " + customsData.country.name + ")", amount: ce.import_duty, block: "D", responsibility: "Trader" },
+      { line_item: "VAT/GST (" + ce.vat_rate + "% - " + customsData.country.name + ")", amount: ce.vat_amount, block: "D", responsibility: "Trader" },
+      { line_item: "Customs Brokerage", amount: ce.customs_brokerage, block: "D", responsibility: "Trader" },
+      { line_item: "Inspection Fees", amount: ce.inspection_fees, block: "D", responsibility: "Trader" },
+    ];
+    setNewLines(prev => [...prev, ...customsLines]);
+    setCostDirty(true);
+    setStep(2);
+  };
 
   const doAction = async (action) => {
     if (!deal?.id) return;
@@ -653,14 +699,65 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
           </div>
 
           <div style={S.card}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Trade Route</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>Trade Route & Freight</div>
+              {freightData && costMatrix && isDraft && (
+                <button style={{ ...S.btn(true), background: "#1565C0", fontSize: 12 }} onClick={applyFreightToCostMatrix}>
+                  Apply Freight to Cost Matrix
+                </button>
+              )}
+            </div>
             <TradeRouteMap
               buyLocation={form.buy_location}
               sellLocation={form.sell_location}
               buyIncoterm={form.buy_incoterm}
               sellIncoterm={form.sell_incoterm}
               transportMode={form.transport_mode}
+              onFreightLoaded={setFreightData}
             />
+          </div>
+
+          <div style={S.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>Customs & Import Duties</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={S.btn(false)} onClick={fetchCustomsEstimate} disabled={customsLoading || !form.hs_code || !form.sell_location}>
+                  {customsLoading ? "Fetching..." : "Fetch Customs Estimate"}
+                </button>
+                {customsData && costMatrix && isDraft && (
+                  <button style={{ ...S.btn(true), background: "#6A1B9A", fontSize: 12 }} onClick={applyCustomsToCostMatrix}>
+                    Apply Customs to Cost Matrix
+                  </button>
+                )}
+              </div>
+            </div>
+            {!form.hs_code || !form.sell_location ? (
+              <div style={{ padding: 24, textAlign: "center", color: "#AAA", fontSize: 13 }}>Enter an HS Code and destination location in the Deal Sheet to estimate customs costs.</div>
+            ) : customsData ? (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, color: "#888" }}>Destination: <strong style={{ color: "#1A1A1A" }}>{customsData.country.name}</strong> | HS: <strong style={{ color: "#1A1A1A" }}>{customsData.hs_code}</strong> (Chapter {customsData.hs_chapter})</div>
+                  <div style={{ fontSize: 10, color: "#AAA" }}>{customsData.source}</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 8 }}>
+                  {[
+                    { label: "Import Duty (" + customsData.estimates.import_duty_rate + "%)", value: customsData.estimates.import_duty, color: "#6A1B9A" },
+                    { label: "VAT/GST (" + customsData.estimates.vat_rate + "%)", value: customsData.estimates.vat_amount, color: "#4A148C" },
+                    { label: "Customs Brokerage", value: customsData.estimates.customs_brokerage, color: "#7B1FA2" },
+                    { label: "Inspection Fees", value: customsData.estimates.inspection_fees, color: "#8E24AA" },
+                    { label: "Total Customs", value: customsData.estimates.total, color: "#1B4332", bold: true },
+                  ].map((item, i) => (
+                    <div key={i} style={{ padding: "8px 10px", background: item.bold ? "#1B4332" : "#FFF", borderRadius: 6, border: item.bold ? "none" : "1px solid #E8E4DC" }}>
+                      <div style={{ fontSize: 10, color: item.bold ? "#CE93D8" : "#888", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.3px" }}>{item.label}</div>
+                      <div style={{ fontSize: item.bold ? 18 : 14, fontWeight: item.bold ? 800 : 600, color: item.bold ? "#FFF" : item.color, fontFamily: "monospace", marginTop: 2 }}>${item.value.toLocaleString()}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 9, color: "#BBB", marginTop: 8, fontStyle: "italic" }}>{customsData.disclaimer}</div>
+              </div>
+            ) : (
+              <div style={{ padding: 24, textAlign: "center", color: "#AAA", fontSize: 13 }}>Click "Fetch Customs Estimate" to get duty and tax rates for {form.sell_location}.</div>
+            )}
           </div>
         </div>
       )}
