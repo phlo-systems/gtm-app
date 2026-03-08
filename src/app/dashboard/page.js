@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase-browser";
 import { useRouter } from "next/navigation";
 import { calculateIncotermGap, INCOTERMS_2020 } from "@/lib/incoterms";
 import { WORLD_PORTS, getEstimatedVoyages } from "@/lib/ports";
+import GuidedTour from "@/components/GuidedTour";
 
 const S = {
   page: { fontFamily: "'Segoe UI', -apple-system, sans-serif", background: "#F8F7F4", minHeight: "100vh", color: "#1A1A1A" },
@@ -297,14 +298,14 @@ function Sidebar({ active, onNav, user, onLogout }) {
     { key: "settings", icon: "\u2699", label: "Settings" },
   ];
   return (
-    <div style={S.sidebar}>
+    <div style={S.sidebar} data-tour="sidebar">
       <div style={{ padding: "20px 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
         <div style={{ fontSize: 22, fontWeight: 800 }}>GTM</div>
         <div style={{ fontSize: 10, opacity: 0.5, letterSpacing: "1.5px", marginTop: 2 }}>PHLO SYSTEMS</div>
       </div>
       <div style={{ flex: 1, padding: "12px 0" }}>
         {items.map((i) => (
-          <div key={i.key} onClick={() => onNav(i.key)} style={{
+          <div key={i.key} data-tour={"nav-" + i.key} onClick={() => onNav(i.key)} style={{
             display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", cursor: "pointer", fontSize: 13,
             fontWeight: active === i.key ? 700 : 400, background: active === i.key ? "rgba(255,255,255,0.1)" : "transparent",
             borderLeft: active === i.key ? "3px solid #FFF" : "3px solid transparent",
@@ -1595,6 +1596,7 @@ export default function GTMApp() {
   const [currentDeal, setCurrentDeal] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showTour, setShowTour] = useState(false);
   const supabase = createClient();
   const router = useRouter();
 
@@ -1605,6 +1607,8 @@ export default function GTMApp() {
       setUser(user);
       await loadDeals();
       setLoading(false);
+      // Show tour for first-time users
+      if (!localStorage.getItem("gtm_tour_done")) setShowTour(true);
     }
     init();
   }, []);
@@ -1649,6 +1653,9 @@ export default function GTMApp() {
     <div style={S.page}>
       <Sidebar active={page} onNav={setPage} user={user} onLogout={handleLogout} />
       <div style={S.main}>{renderPage()}</div>
+      {/* Help / Restart Tour button */}
+      <button onClick={() => { localStorage.removeItem("gtm_tour_done"); setShowTour(true); }} style={{ position: "fixed", bottom: 20, right: 20, width: 44, height: 44, borderRadius: 22, background: "#1B4332", color: "#FFF", border: "none", fontSize: 18, cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.2)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }} title="Restart guided tour">?</button>
+      {showTour && <GuidedTour onComplete={() => setShowTour(false)} />}
     </div>
   );
 }
