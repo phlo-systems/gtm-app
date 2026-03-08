@@ -59,7 +59,7 @@ function ComboBox({ label, value, options, onSelect, onCreate, disabled, placeho
           {search.trim() && !exactMatch && (
             <div onClick={() => { onCreate(search.trim()); setOpen(false); setSearch(""); }}
               style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", background: "#F0F7FF", color: "#1B4332", fontWeight: 600, borderTop: "1px solid #B8D4F0" }}>
-              + Create new: &ldquo;{search.trim()}&rdquo;
+              + Create new: “{search.trim()}”
             </div>
           )}
           {filtered.length === 0 && !search.trim() && (
@@ -125,8 +125,8 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
       mapInstance.current = map;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "\u00a9 OpenStreetMap" }).addTo(map);
 
-      const supplierIcon = L.divIcon({ className: "", html: '<div style="background:#1B4332;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">\u{1F3ED} ' + buyLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
-      const customerIcon = L.divIcon({ className: "", html: '<div style="background:#C62828;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">\u{1F464} ' + sellLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
+      const supplierIcon = L.divIcon({ className: "", html: '<div style="background:#1B4332;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">🏭 ' + buyLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
+      const customerIcon = L.divIcon({ className: "", html: '<div style="background:#C62828;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">👤 ' + sellLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
 
       L.marker(buyCoords, { icon: supplierIcon }).addTo(map);
       L.marker(sellCoords, { icon: customerIcon }).addTo(map);
@@ -138,15 +138,15 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
       if (isOcean && sellLevel >= 3) {
         // Truck from supplier to port
         if (buyLevel < 3) {
-          segments.push({ from: buyCoords, to: buyCoords, type: "truck_origin", label: "\u{1F69A} Truck (Origin)" });
+          segments.push({ from: buyCoords, to: buyCoords, type: "truck_origin", label: "🚚 Truck (Origin)" });
         }
         // Ocean freight between ports
         if (sellLevel >= 5) {
-          segments.push({ from: buyCoords, to: sellCoords, type: "ocean", label: "\u{1F6A2} Ocean Freight" });
+          segments.push({ from: buyCoords, to: sellCoords, type: "ocean", label: "🚢 Ocean Freight" });
         }
         // Truck from port to customer
         if (sellLevel >= 8) {
-          segments.push({ from: sellCoords, to: sellCoords, type: "truck_dest", label: "\u{1F69A} Truck (Dest)" });
+          segments.push({ from: sellCoords, to: sellCoords, type: "truck_dest", label: "🚚 Truck (Dest)" });
         }
       }
 
@@ -161,7 +161,7 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
       // Add transport mode labels at midpoint
       const midLat = (buyCoords[0] + sellCoords[0]) / 2;
       const midLng = (buyCoords[1] + sellCoords[1]) / 2;
-      const modeLabel = isOcean ? "\u{1F6A2} Ocean" : transportMode === "road" ? "\u{1F69A} Road" : "\u2708\uFE0F Air";
+      const modeLabel = isOcean ? "🚢 Ocean" : transportMode === "road" ? "🚚 Road" : "\u2708\uFE0F Air";
       const modeColor = isOcean ? "#1565C0" : transportMode === "road" ? "#E65100" : "#6A1B9A";
 
       L.marker([midLat, midLng], {
@@ -177,7 +177,7 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
         const offsetBuy = [buyCoords[0] + 0.5, buyCoords[1] + 0.5];
         L.polyline([buyCoords, offsetBuy], { color: "#E65100", weight: 3, opacity: 0.6 }).addTo(map);
         L.marker(buyCoords, {
-          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">\u{1F69A} Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
+          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">🚚 Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
         }).addTo(map);
       }
 
@@ -186,7 +186,7 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
         const offsetSell = [sellCoords[0] - 0.5, sellCoords[1] - 0.5];
         L.polyline([offsetSell, sellCoords], { color: "#E65100", weight: 3, opacity: 0.6 }).addTo(map);
         L.marker(sellCoords, {
-          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">\u{1F69A} Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
+          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">🚚 Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
         }).addTo(map);
       }
 
@@ -220,8 +220,8 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
       <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center" }}>
         <span style={{ fontSize: 10, color: "#888" }}><span style={{ display: "inline-block", width: 20, height: 3, background: "#1565C0", verticalAlign: "middle", marginRight: 4, borderTop: "2px dashed #1565C0" }} /> Ocean</span>
         <span style={{ fontSize: 10, color: "#888" }}><span style={{ display: "inline-block", width: 20, height: 3, background: "#E65100", verticalAlign: "middle", marginRight: 4 }} /> Inland/Road</span>
-        <span style={{ fontSize: 10, color: "#888" }}>\u{1F3ED} Supplier</span>
-        <span style={{ fontSize: 10, color: "#888" }}>\u{1F464} Customer</span>
+        <span style={{ fontSize: 10, color: "#888" }}>🏭 Supplier</span>
+        <span style={{ fontSize: 10, color: "#888" }}>👤 Customer</span>
       </div>
     </div>
   );
