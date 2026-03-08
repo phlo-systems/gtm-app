@@ -71,161 +71,172 @@ function ComboBox({ label, value, options, onSelect, onCreate, disabled, placeho
   );
 }
 
-/* ── Trade Route Map (Leaflet) ── */
+/* ── Trade Route Map (Premium Dark Theme + Freight Estimates) ── */
 function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, transportMode }) {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const [status, setStatus] = useState("loading");
+  const [freight, setFreight] = useState(null);
 
   useEffect(() => {
     if (!buyLocation || !sellLocation) { setStatus("no-locations"); return; }
 
-    // Load Leaflet CSS + JS
     if (!document.getElementById("leaflet-css")) {
-      const link = document.createElement("link");
-      link.id = "leaflet-css";
-      link.rel = "stylesheet";
-      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      document.head.appendChild(link);
+      const link = document.createElement("link"); link.id = "leaflet-css"; link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(link);
     }
 
-    const loadLeaflet = () => {
-      return new Promise((resolve) => {
-        if (window.L) return resolve(window.L);
-        const script = document.createElement("script");
-        script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-        script.onload = () => resolve(window.L);
-        document.head.appendChild(script);
-      });
-    };
+    const loadLeaflet = () => new Promise((resolve) => {
+      if (window.L) return resolve(window.L);
+      const s = document.createElement("script"); s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      s.onload = () => resolve(window.L); document.head.appendChild(s);
+    });
 
     const geocode = async (place) => {
       try {
-        const res = await fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(place) + "&limit=1");
-        const data = await res.json();
-        if (data.length > 0) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-      } catch {}
-      return null;
+        const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(place) + "&limit=1");
+        const d = await r.json(); if (d.length > 0) return [parseFloat(d[0].lat), parseFloat(d[0].lon)];
+      } catch {} return null;
     };
 
-    const buyLevel = { EXW: 0, FCA: 1, FAS: 2, FOB: 3, CFR: 5, CIF: 6, CPT: 5, CIP: 6, DAP: 8, DPU: 9, DDP: 10 }[buyIncoterm] || 0;
-    const sellLevel = { EXW: 0, FCA: 1, FAS: 2, FOB: 3, CFR: 5, CIF: 6, CPT: 5, CIP: 6, DAP: 8, DPU: 9, DDP: 10 }[sellIncoterm] || 0;
+    const bezierCurve = (p1, p2, numPoints) => {
+      const pts = [];
+      const midLat = (p1[0] + p2[0]) / 2;
+      const midLng = (p1[1] + p2[1]) / 2;
+      const dist = Math.sqrt((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2);
+      const offset = dist * 0.15;
+      const ctrl = [midLat + offset, midLng];
+      for (let i = 0; i <= (numPoints || 50); i++) {
+        const t = i / (numPoints || 50);
+        const lat = (1-t)*(1-t)*p1[0] + 2*(1-t)*t*ctrl[0] + t*t*p2[0];
+        const lng = (1-t)*(1-t)*p1[1] + 2*(1-t)*t*ctrl[1] + t*t*p2[1];
+        pts.push([lat, lng]);
+      }
+      return pts;
+    };
 
     const init = async () => {
-      setStatus("loading");
+      setStatus("loading"); setFreight(null);
       const L = await loadLeaflet();
       const [buyCoords, sellCoords] = await Promise.all([geocode(buyLocation), geocode(sellLocation)]);
-
       if (!buyCoords || !sellCoords) { setStatus("geo-fail"); return; }
-
       if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; }
       if (!mapRef.current) return;
 
-      const map = L.map(mapRef.current, { scrollWheelZoom: false, attributionControl: false });
+      const map = L.map(mapRef.current, { scrollWheelZoom: false, attributionControl: false, zoomControl: false });
       mapInstance.current = map;
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "\u00a9 OpenStreetMap" }).addTo(map);
+      L.control.zoom({ position: "bottomright" }).addTo(map);
 
-      const supplierIcon = L.divIcon({ className: "", html: '<div style="background:#1B4332;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">🏭 ' + buyLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
-      const customerIcon = L.divIcon({ className: "", html: '<div style="background:#C62828;color:#FFF;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.3)">👤 ' + sellLocation + '</div>', iconSize: [0, 0], iconAnchor: [-8, 16] });
+      // Dark premium tile layer
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        subdomains: "abcd", maxZoom: 19
+      }).addTo(map);
 
-      L.marker(buyCoords, { icon: supplierIcon }).addTo(map);
-      L.marker(sellCoords, { icon: customerIcon }).addTo(map);
-
-      // Determine transport segments based on incoterms
+      // Curved ocean route with glow effect
       const isOcean = transportMode === "ocean" || !transportMode;
-      const segments = [];
+      const curvePoints = bezierCurve(buyCoords, sellCoords, 60);
 
-      if (isOcean && sellLevel >= 3) {
-        // Truck from supplier to port
-        if (buyLevel < 3) {
-          segments.push({ from: buyCoords, to: buyCoords, type: "truck_origin", label: "🚚 Truck (Origin)" });
-        }
-        // Ocean freight between ports
-        if (sellLevel >= 5) {
-          segments.push({ from: buyCoords, to: sellCoords, type: "ocean", label: "🚢 Ocean Freight" });
-        }
-        // Truck from port to customer
-        if (sellLevel >= 8) {
-          segments.push({ from: sellCoords, to: sellCoords, type: "truck_dest", label: "🚚 Truck (Dest)" });
-        }
-      }
+      // Glow layer (wide, transparent)
+      L.polyline(curvePoints, { color: isOcean ? "#00BCD4" : "#FF6D00", weight: 10, opacity: 0.15, lineCap: "round" }).addTo(map);
+      // Main route line
+      L.polyline(curvePoints, { color: isOcean ? "#00E5FF" : "#FF9100", weight: 3, opacity: 0.9, dashArray: isOcean ? "12 8" : "8 5", lineCap: "round" }).addTo(map);
+      // Bright core
+      L.polyline(curvePoints, { color: "#FFFFFF", weight: 1, opacity: 0.3, dashArray: "4 12", lineCap: "round" }).addTo(map);
 
-      // Draw the main route
-      const routeLine = L.polyline([buyCoords, sellCoords], {
-        color: isOcean ? "#1565C0" : "#E65100",
-        weight: 3,
-        dashArray: isOcean ? "10 6" : "8 4",
-        opacity: 0.8,
-      }).addTo(map);
+      // Origin marker (supplier)
+      const mkOrigin = (coords, label, inco, color) => {
+        L.circleMarker(coords, { radius: 8, fillColor: color, fillOpacity: 0.9, color: "#FFF", weight: 2 }).addTo(map);
+        L.circleMarker(coords, { radius: 14, fillColor: color, fillOpacity: 0.15, color: color, weight: 1 }).addTo(map);
+        L.marker(coords, { icon: L.divIcon({ className: "", html: '<div style="background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);color:#FFF;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;white-space:nowrap;border:1px solid ' + color + '40;box-shadow:0 4px 16px rgba(0,0,0,0.4)"><span style="color:' + color + '">' + inco + '</span> ' + label + '</div>', iconSize: [0, 0], iconAnchor: [-12, 20] }) }).addTo(map);
+      };
+      mkOrigin(buyCoords, buyLocation, buyIncoterm || "FOB", "#4CAF50");
+      mkOrigin(sellCoords, sellLocation, sellIncoterm || "CIF", "#FF5252");
 
-      // Add transport mode labels at midpoint
-      const midLat = (buyCoords[0] + sellCoords[0]) / 2;
-      const midLng = (buyCoords[1] + sellCoords[1]) / 2;
-      const modeLabel = isOcean ? "🚢 Ocean" : transportMode === "road" ? "🚚 Road" : "\u2708\uFE0F Air";
-      const modeColor = isOcean ? "#1565C0" : transportMode === "road" ? "#E65100" : "#6A1B9A";
+      // Transport mode label at midpoint of curve
+      const mid = curvePoints[Math.floor(curvePoints.length / 2)];
+      const modeEmoji = isOcean ? "\u26F5" : transportMode === "road" ? "\uD83D\uDE9A" : "\u2708\uFE0F";
+      const modeText = isOcean ? "Ocean" : transportMode === "road" ? "Road" : "Air";
+      const modeCol = isOcean ? "#00E5FF" : "#FF9100";
+      L.marker(mid, { icon: L.divIcon({ className: "", html: '<div style="background:rgba(0,0,0,0.8);backdrop-filter:blur(8px);color:' + modeCol + ';padding:4px 10px;border-radius:16px;font-size:11px;font-weight:700;white-space:nowrap;border:1px solid ' + modeCol + '50;letter-spacing:0.5px">' + modeEmoji + ' ' + modeText + '</div>', iconSize: [0,0], iconAnchor: [30, 12] }) }).addTo(map);
 
-      L.marker([midLat, midLng], {
-        icon: L.divIcon({
-          className: "",
-          html: '<div style="background:' + modeColor + ';color:#FFF;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid #FFF;box-shadow:0 2px 8px rgba(0,0,0,0.3)">' + modeLabel + '</div>',
-          iconSize: [0, 0], iconAnchor: [40, 12],
-        })
-      }).addTo(map);
+      // Inland legs (if incoterms require)
+      const buyLevel = { EXW:0,FCA:1,FAS:2,FOB:3,CFR:5,CIF:6,CPT:5,CIP:6,DAP:8,DPU:9,DDP:10 }[buyIncoterm] || 0;
+      const sellLevel = { EXW:0,FCA:1,FAS:2,FOB:3,CFR:5,CIF:6,CPT:5,CIP:6,DAP:8,DPU:9,DDP:10 }[sellIncoterm] || 0;
 
-      // Draw origin inland segment if applicable
       if (buyLevel < 3 && isOcean) {
-        const offsetBuy = [buyCoords[0] + 0.5, buyCoords[1] + 0.5];
-        L.polyline([buyCoords, offsetBuy], { color: "#E65100", weight: 3, opacity: 0.6 }).addTo(map);
-        L.marker(buyCoords, {
-          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">🚚 Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
-        }).addTo(map);
+        const off = [buyCoords[0] + 0.4, buyCoords[1] + 0.6];
+        L.polyline([buyCoords, off], { color: "#FF9100", weight: 2.5, opacity: 0.7, dashArray: "6 4" }).addTo(map);
+        L.marker(off, { icon: L.divIcon({ className: "", html: '<div style="background:rgba(255,145,0,0.85);color:#FFF;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:600">\uD83D\uDE9A Inland</div>', iconSize: [0,0], iconAnchor: [20, -4] }) }).addTo(map);
       }
-
-      // Draw destination inland segment if applicable
       if (sellLevel >= 8 && isOcean) {
-        const offsetSell = [sellCoords[0] - 0.5, sellCoords[1] - 0.5];
-        L.polyline([offsetSell, sellCoords], { color: "#E65100", weight: 3, opacity: 0.6 }).addTo(map);
-        L.marker(sellCoords, {
-          icon: L.divIcon({ className: "", html: '<div style="background:#E65100;color:#FFF;padding:2px 6px;border-radius:10px;font-size:9px;font-weight:600;white-space:nowrap;margin-top:22px">🚚 Inland</div>', iconSize: [0, 0], iconAnchor: [-8, 0] })
-        }).addTo(map);
+        const off = [sellCoords[0] - 0.4, sellCoords[1] - 0.6];
+        L.polyline([off, sellCoords], { color: "#FF9100", weight: 2.5, opacity: 0.7, dashArray: "6 4" }).addTo(map);
+        L.marker(off, { icon: L.divIcon({ className: "", html: '<div style="background:rgba(255,145,0,0.85);color:#FFF;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:600">\uD83D\uDE9A Inland</div>', iconSize: [0,0], iconAnchor: [20, -4] }) }).addTo(map);
       }
 
-      // Add incoterm labels
-      L.marker(buyCoords, {
-        icon: L.divIcon({ className: "", html: '<div style="background:#FFF;color:#1B4332;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;border:1px solid #1B4332;margin-top:-28px">Buy: ' + (buyIncoterm || "FOB") + '</div>', iconSize: [0, 0], iconAnchor: [-8, 24] })
-      }).addTo(map);
-
-      L.marker(sellCoords, {
-        icon: L.divIcon({ className: "", html: '<div style="background:#FFF;color:#C62828;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;border:1px solid #C62828;margin-top:-28px">Sell: ' + (sellIncoterm || "CIF") + '</div>', iconSize: [0, 0], iconAnchor: [-8, 24] })
-      }).addTo(map);
-
-      map.fitBounds([buyCoords, sellCoords], { padding: [60, 60] });
+      map.fitBounds([buyCoords, sellCoords], { padding: [80, 80] });
       setStatus("ready");
+
+      // Fetch freight estimate
+      try {
+        const fRes = await fetch("/api/freight-estimate?olat=" + buyCoords[0] + "&olng=" + buyCoords[1] + "&dlat=" + sellCoords[0] + "&dlng=" + sellCoords[1] + "&origin=" + encodeURIComponent(buyLocation) + "&dest=" + encodeURIComponent(sellLocation) + "&mode=" + (transportMode || "ocean"));
+        if (fRes.ok) { const fData = await fRes.json(); setFreight(fData); }
+      } catch {}
     };
 
     init();
-
     return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; } };
   }, [buyLocation, sellLocation, buyIncoterm, sellIncoterm, transportMode]);
 
   if (!buyLocation || !sellLocation) {
-    return <div style={{ background: "#F5F5F5", borderRadius: 8, padding: 32, textAlign: "center", color: "#AAA", fontSize: 13 }}>Enter supplier and customer locations in the Deal Sheet to see the trade route map.</div>;
+    return <div style={{ background: "#1A1A2E", borderRadius: 12, padding: 48, textAlign: "center", color: "#555", fontSize: 13 }}>Enter supplier and customer locations in the Deal Sheet to see the trade route map.</div>;
   }
 
   return (
-    <div style={{ position: "relative" }}>
-      <div ref={mapRef} style={{ height: 320, borderRadius: 8, border: "1px solid #E8E4DC" }} />
-      {status === "loading" && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#FFF", padding: "8px 16px", borderRadius: 6, fontSize: 12, color: "#888", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>Loading map...</div>}
-      {status === "geo-fail" && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#FFF5F5", padding: "8px 16px", borderRadius: 6, fontSize: 12, color: "#C62828" }}>Could not geocode locations. Try more specific place names.</div>}
-      <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center" }}>
-        <span style={{ fontSize: 10, color: "#888" }}><span style={{ display: "inline-block", width: 20, height: 3, background: "#1565C0", verticalAlign: "middle", marginRight: 4, borderTop: "2px dashed #1565C0" }} /> Ocean</span>
-        <span style={{ fontSize: 10, color: "#888" }}><span style={{ display: "inline-block", width: 20, height: 3, background: "#E65100", verticalAlign: "middle", marginRight: 4 }} /> Inland/Road</span>
-        <span style={{ fontSize: 10, color: "#888" }}>🏭 Supplier</span>
-        <span style={{ fontSize: 10, color: "#888" }}>👤 Customer</span>
+    <div>
+      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", border: "1px solid #2A2A3E" }}>
+        <div ref={mapRef} style={{ height: 380, background: "#1A1A2E" }} />
+        {status === "loading" && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)", padding: "12px 24px", borderRadius: 12, fontSize: 13, color: "#00E5FF", border: "1px solid #00E5FF30" }}>Loading route...</div>}
+        {status === "geo-fail" && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "rgba(0,0,0,0.8)", padding: "12px 24px", borderRadius: 12, fontSize: 12, color: "#FF5252", border: "1px solid #FF525230" }}>Could not geocode locations. Try more specific place names.</div>}
       </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "center" }}>
+        <span style={{ fontSize: 10, color: "#888", display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 16, height: 2, background: "#00E5FF", borderRadius: 1 }} /> Ocean</span>
+        <span style={{ fontSize: 10, color: "#888", display: "flex", alignItems: "center", gap: 4 }}><span style={{ display: "inline-block", width: 16, height: 2, background: "#FF9100", borderRadius: 1 }} /> Inland</span>
+        <span style={{ fontSize: 10, color: "#888" }}><span style={{ color: "#4CAF50" }}>{"\u25CF"}</span> Supplier</span>
+        <span style={{ fontSize: 10, color: "#888" }}><span style={{ color: "#FF5252" }}>{"\u25CF"}</span> Customer</span>
+      </div>
+
+      {freight && (
+        <div style={{ marginTop: 16, background: "#FAFAF8", borderRadius: 8, border: "1px solid #E8E4DC", padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1B4332" }}>Freight Cost Estimate ({freight.container_type})</div>
+            <div style={{ fontSize: 10, color: "#AAA" }}>{freight.route.distance_km.toLocaleString()} km \u2022 ~{freight.transit_days} days \u2022 {freight.source}</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+            {[
+              { label: "Ocean Freight", value: freight.estimates.ocean_freight, color: "#1565C0" },
+              { label: "BAF Surcharge", value: freight.estimates.baf_surcharge, color: "#0D47A1" },
+              { label: "THC Handling", value: freight.estimates.thc_handling, color: "#4527A0" },
+              { label: "Origin Inland", value: freight.estimates.origin_inland, color: "#E65100" },
+              { label: "Dest Inland", value: freight.estimates.dest_inland, color: "#BF360C" },
+              { label: "Insurance", value: freight.estimates.cargo_insurance, color: "#2E7D32" },
+              { label: "Documentation", value: freight.estimates.documentation, color: "#546E7A" },
+              { label: "Total Estimate", value: freight.estimates.total, color: "#1B4332", bold: true },
+            ].map((item, i) => (
+              <div key={i} style={{ padding: "8px 10px", background: item.bold ? "#1B4332" : "#FFF", borderRadius: 6, border: item.bold ? "none" : "1px solid #E8E4DC" }}>
+                <div style={{ fontSize: 10, color: item.bold ? "#A5D6A7" : "#888", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.3px" }}>{item.label}</div>
+                <div style={{ fontSize: item.bold ? 18 : 14, fontWeight: item.bold ? 800 : 600, color: item.bold ? "#FFF" : item.color, fontFamily: "monospace", marginTop: 2 }}>${item.value.toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 9, color: "#BBB", marginTop: 8, fontStyle: "italic" }}>{freight.disclaimer}</div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 /* ── Sidebar ── */
 function Sidebar({ active, onNav, user, onLogout }) {
