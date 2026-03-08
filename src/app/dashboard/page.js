@@ -367,7 +367,7 @@ function DashboardView({ deals, onNav }) {
   );
 }
 
-function DealsList({ deals, onOpenDeal, onNewDeal }) {
+function DealsList({ deals, onOpenDeal, onNewDeal, onDeleteDeal }) {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -382,7 +382,7 @@ function DealsList({ deals, onOpenDeal, onNewDeal }) {
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={S.th}>Deal ID</th><th style={S.th}>Customer</th><th style={S.th}>Supplier</th><th style={S.th}>Incoterms</th><th style={S.th}>Status</th><th style={{ ...S.th, textAlign: "right" }}>Margin</th></tr></thead>
+            <thead><tr><th style={S.th}>Deal ID</th><th style={S.th}>Customer</th><th style={S.th}>Supplier</th><th style={S.th}>Incoterms</th><th style={S.th}>Status</th><th style={{ ...S.th, textAlign: "right" }}>Margin</th><th style={{ ...S.th, width: 40 }}></th></tr></thead>
             <tbody>{deals.map(d => (
               <tr key={d.id} onClick={() => onOpenDeal(d)} style={{ cursor: "pointer" }}>
                 <td style={{ ...S.td, fontWeight: 700, color: "#1B4332" }}>{d.deal_number}</td>
@@ -391,6 +391,7 @@ function DealsList({ deals, onOpenDeal, onNewDeal }) {
                 <td style={{ ...S.td, fontSize: 11 }}><span style={{ color: "#1B7A43" }}>{d.buy_incoterm || "\u2014"}</span> {"\u2192"} <span style={{ color: "#C62828" }}>{d.sell_incoterm || "\u2014"}</span></td>
                 <td style={S.td}><span style={S.badge(statusColor[d.status] || "#888")}>{d.status}</span></td>
                 <td style={{ ...S.td, textAlign: "right", fontWeight: 600 }}>{d.gross_margin_pct > 0 ? d.gross_margin_pct.toFixed(1) + "%" : "\u2014"}</td>
+                <td style={S.td}>{d.status === "draft" && <button onClick={(e) => { e.stopPropagation(); onDeleteDeal(d); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#C62828", fontSize: 14 }}>{"\u2715"}</button>}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -467,8 +468,19 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   const saveDeal = async () => {
     setSaving(true);
     try {
+      // Strip UI-only fields that don't exist in DB
+      const payload = { ...form };
+      delete payload.port_of_origin;
+      delete payload.port_of_dest;
+      delete payload.supplier_inland_address;
+      delete payload.customer_inland_address;
+      // Convert empty strings to null for numeric/date fields
+      if (payload.unit_price === "") payload.unit_price = null;
+      if (payload.selling_price === "") payload.selling_price = null;
+      if (payload.quantity === "") payload.quantity = null;
+      if (payload.expected_shipment_date === "") payload.expected_shipment_date = null;
       const url = deal?.id ? "/api/deals/" + deal.id : "/api/deals";
-      const res = await fetch(url, { method: deal?.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const res = await fetch(url, { method: deal?.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const saved = await res.json();
       if (res.ok) {
         onSaved(saved);
@@ -1118,6 +1130,231 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   );
 }
 
+/* ── Post-Calc: Budget vs Actual Variance Analysis ── */
+function PostCalcScreen({ deals }) {
+  const [selectedDeal, setSelectedDeal] = useState(null);
+  const [budgetData, setBudgetData] = useState(null);
+  const [actualData, setActualData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const approvedDeals = deals.filter(d => d.status === "approved");
+
+  const loadBudget = async (deal) => {
+    setSelectedDeal(deal);
+    setActualData(null);
+    try {
+      const res = await fetch("/api/deals/" + deal.id + "/cost-matrix");
+      const data = await res.json();
+      if (data && data.length > 0) setBudgetData(data[0]);
+    } catch {}
+  };
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+
+    // Load SheetJS
+    if (!window.XLSX) {
+      const s = document.createElement("script");
+      s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+      document.head.appendChild(s);
+      await new Promise(r => { s.onload = r; });
+    }
+
+    try {
+      const data = await file.arrayBuffer();
+      const wb = window.XLSX.read(data);
+
+      // Parse Cost Matrix sheet (or first sheet)
+      const cmSheet = wb.Sheets["Cost Matrix"] || wb.Sheets[wb.SheetNames[0]];
+      const rows = window.XLSX.utils.sheet_to_json(cmSheet, { header: 1 });
+
+      // Find cost lines (rows with Block, Cost Line, Type, Amount)
+      const actualLines = [];
+      let totalActual = 0;
+      for (const row of rows) {
+        if (row[0] && ["A", "B", "C", "D"].includes(String(row[0]).trim()) && row[1]) {
+          const amt = parseFloat(row[3]) || 0;
+          actualLines.push({ block: String(row[0]).trim(), line_item: String(row[1]).trim(), cost_type: String(row[2] || "").trim(), amount: amt });
+          totalActual += amt;
+        }
+      }
+
+      // Try to get actual sales from Sales Order sheet
+      let actualSales = 0;
+      let actualPaymentDelay = 0;
+      const soSheet = wb.Sheets["Sales Order"];
+      if (soSheet) {
+        const soRows = window.XLSX.utils.sheet_to_json(soSheet, { header: 1 });
+        for (const row of soRows) {
+          if (String(row[0] || "").includes("Total Sales")) actualSales = parseFloat(String(row[1] || "0").replace(/[^0-9.-]/g, "")) || 0;
+          if (String(row[0] || "").includes("Payment Delay")) actualPaymentDelay = parseFloat(row[1]) || 0;
+        }
+      }
+
+      setActualData({ lines: actualLines, total: totalActual, sales: actualSales, payment_delay: actualPaymentDelay });
+    } catch (err) { alert("Error parsing file: " + err.message); }
+    setLoading(false);
+  };
+
+  const budgetLines = budgetData?.cost_lines || [];
+  const budgetTotal = budgetLines.filter(l => l.is_active !== false).reduce((s, l) => s + (l.amount || 0), 0);
+
+  // Match budget to actual lines
+  const getVariance = () => {
+    if (!actualData || !budgetData) return [];
+    const variance = [];
+    const matchedActual = new Set();
+
+    for (const bl of budgetLines.sort((a, b) => a.sort_order - b.sort_order)) {
+      const al = actualData.lines.find((a, i) => !matchedActual.has(i) && (a.line_item.toLowerCase().includes(bl.line_item.toLowerCase().split("(")[0].trim().substring(0, 15)) || (a.block === bl.block && Math.abs(a.amount - bl.amount) < bl.amount * 0.5)));
+      const alIdx = al ? actualData.lines.indexOf(al) : -1;
+      if (alIdx >= 0) matchedActual.add(alIdx);
+      variance.push({
+        block: bl.block,
+        line_item: bl.line_item,
+        budget: bl.amount || 0,
+        actual: al ? al.amount : 0,
+        diff: (al ? al.amount : 0) - (bl.amount || 0),
+        pct: bl.amount > 0 ? (((al ? al.amount : 0) - bl.amount) / bl.amount * 100) : 0,
+      });
+    }
+
+    // Unmatched actual lines
+    actualData.lines.forEach((al, i) => {
+      if (!matchedActual.has(i)) {
+        variance.push({ block: al.block, line_item: al.line_item + " (unbudgeted)", budget: 0, actual: al.amount, diff: al.amount, pct: 100 });
+      }
+    });
+
+    return variance;
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 20px 0" }}>Post-Trade Analytics</h2>
+
+      {/* Deal Selector */}
+      <div style={S.card}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Select Approved Deal</div>
+        {approvedDeals.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: "#AAA" }}>No approved deals yet. Approve a deal first to run post-trade analysis.</div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {approvedDeals.map(d => (
+              <button key={d.id} onClick={() => loadBudget(d)} style={{ ...S.btn(selectedDeal?.id === d.id), padding: "6px 14px", fontSize: 12 }}>
+                {d.deal_number} {"\u2014"} {d.customer?.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedDeal && budgetData && (
+        <>
+          {/* Upload Section */}
+          <div style={S.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Upload Actuals from ERP</div>
+                <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Upload the PO/SO Excel with actual costs filled in (same format as downloaded). The Cost Matrix sheet should contain actual cost amounts.</div>
+              </div>
+              <label style={{ ...S.btn(true), cursor: "pointer" }}>
+                {loading ? "Processing..." : "Upload Excel"} <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: "none" }} />
+              </label>
+            </div>
+          </div>
+
+          {/* Budget Summary (always shown when deal selected) */}
+          <div style={S.card}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Budgeted Cost Matrix ({selectedDeal.deal_number})</div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr><th style={S.th}>Blk</th><th style={S.th}>Cost Line</th><th style={{ ...S.th, textAlign: "right" }}>Budget</th>{actualData && <th style={{ ...S.th, textAlign: "right" }}>Actual</th>}{actualData && <th style={{ ...S.th, textAlign: "right" }}>Variance</th>}{actualData && <th style={{ ...S.th, textAlign: "right" }}>%</th>}</tr></thead>
+              <tbody>
+                {actualData ? getVariance().map((v, i) => (
+                  <tr key={i} style={{ background: Math.abs(v.pct) > 10 ? (v.diff > 0 ? "#FFF5F5" : "#F0FFF4") : "transparent" }}>
+                    <td style={{ ...S.td, fontWeight: 700, color: v.block === "A" ? "#1B7A43" : v.block === "B" ? "#D4A017" : "#6B2D5B" }}>{v.block}</td>
+                    <td style={S.td}>{v.line_item}</td>
+                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>${v.budget.toLocaleString()}</td>
+                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>${v.actual.toLocaleString()}</td>
+                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: v.diff > 0 ? "#C62828" : v.diff < 0 ? "#1B7A43" : "#888" }}>{v.diff > 0 ? "+" : ""}{v.diff.toLocaleString()}</td>
+                    <td style={{ ...S.td, textAlign: "right", fontSize: 11, fontWeight: 600, color: v.diff > 0 ? "#C62828" : v.diff < 0 ? "#1B7A43" : "#888" }}>{v.pct > 0 ? "+" : ""}{v.pct.toFixed(1)}%</td>
+                  </tr>
+                )) : budgetLines.sort((a, b) => a.sort_order - b.sort_order).map((c, i) => (
+                  <tr key={i}>
+                    <td style={{ ...S.td, fontWeight: 700, color: c.block === "A" ? "#1B7A43" : c.block === "B" ? "#D4A017" : "#6B2D5B" }}>{c.block}</td>
+                    <td style={S.td}>{c.line_item}</td>
+                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>${(c.amount || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: "2px solid #1B4332" }}>
+                  <td style={S.td}></td><td style={{ ...S.td, fontWeight: 700 }}>Total</td>
+                  <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>${budgetTotal.toLocaleString()}</td>
+                  {actualData && <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>${actualData.total.toLocaleString()}</td>}
+                  {actualData && <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: (actualData.total - budgetTotal) > 0 ? "#C62828" : "#1B7A43" }}>{(actualData.total - budgetTotal) > 0 ? "+" : ""}{(actualData.total - budgetTotal).toLocaleString()}</td>}
+                  {actualData && <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: (actualData.total - budgetTotal) > 0 ? "#C62828" : "#1B7A43" }}>{budgetTotal > 0 ? ((actualData.total - budgetTotal) / budgetTotal * 100).toFixed(1) : 0}%</td>}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Variance Attribution */}
+          {actualData && (
+            <div style={S.card}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Variance Attribution</div>
+              {(() => {
+                const v = getVariance();
+                const totalVariance = actualData.total - budgetTotal;
+                const sorted = [...v].filter(x => x.diff !== 0).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+                const maxAbs = sorted.length > 0 ? Math.abs(sorted[0].diff) : 1;
+
+                return (
+                  <div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+                      <div style={{ padding: 14, background: totalVariance <= 0 ? "#F0FFF4" : "#FFF5F5", borderRadius: 8, border: "1px solid " + (totalVariance <= 0 ? "#C6E6D0" : "#E6C6C6"), textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Total Cost Variance</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: totalVariance > 0 ? "#C62828" : "#1B7A43" }}>{totalVariance > 0 ? "+" : ""}${totalVariance.toLocaleString()}</div>
+                        <div style={{ fontSize: 11, color: "#666" }}>{budgetTotal > 0 ? (totalVariance / budgetTotal * 100).toFixed(1) : 0}% {totalVariance > 0 ? "over budget" : "under budget"}</div>
+                      </div>
+                      <div style={{ padding: 14, background: "#FFF", borderRadius: 8, border: "1px solid #E8E4DC", textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Budget Margin</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: "#1B4332" }}>{budgetData.gross_margin_pct ? budgetData.gross_margin_pct.toFixed(1) : "0"}%</div>
+                      </div>
+                      <div style={{ padding: 14, background: "#FFF", borderRadius: 8, border: "1px solid #E8E4DC", textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Actual Margin</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: (actualData.sales > 0 ? ((actualData.sales - actualData.total) / actualData.sales * 100) : 0) >= 5 ? "#1B7A43" : "#C62828" }}>{actualData.sales > 0 ? ((actualData.sales - actualData.total) / actualData.sales * 100).toFixed(1) : "\u2014"}%</div>
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#1B4332", marginBottom: 8 }}>Top Variance Drivers</div>
+                    {sorted.slice(0, 8).map((item, i) => {
+                      const pctOfTotal = totalVariance !== 0 ? (item.diff / totalVariance * 100) : 0;
+                      return (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid #F0EDE6" }}>
+                          <span style={{ width: 24, fontWeight: 700, fontSize: 11, color: item.block === "A" ? "#1B7A43" : item.block === "B" ? "#D4A017" : "#6B2D5B" }}>{item.block}</span>
+                          <span style={{ flex: 1, fontSize: 12 }}>{item.line_item}</span>
+                          <div style={{ width: 120, height: 8, background: "#E8E4DC", borderRadius: 4, overflow: "hidden" }}>
+                            <div style={{ width: Math.min(100, Math.abs(item.diff) / maxAbs * 100) + "%", height: "100%", background: item.diff > 0 ? "#C62828" : "#1B7A43", borderRadius: 4 }} />
+                          </div>
+                          <span style={{ width: 80, textAlign: "right", fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: item.diff > 0 ? "#C62828" : "#1B7A43" }}>{item.diff > 0 ? "+" : ""}${item.diff.toLocaleString()}</span>
+                          <span style={{ width: 50, textAlign: "right", fontSize: 10, color: "#888" }}>{Math.abs(pctOfTotal).toFixed(0)}% of var</span>
+                        </div>
+                      );
+                    })}
+
+                    {sorted.length === 0 && <div style={{ padding: 16, textAlign: "center", color: "#888" }}>No material variances detected.</div>}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function GTMApp() {
   const [page, setPage] = useState("dashboard");
   const [deals, setDeals] = useState([]);
@@ -1150,16 +1387,24 @@ export default function GTMApp() {
   const newDeal = () => { setCurrentDeal(null); setPage("precalc"); };
   const handleSaved = (saved) => { setCurrentDeal(saved); loadDeals(); };
   const goBack = () => { setCurrentDeal(null); setPage("deals"); loadDeals(); };
+  const deleteDeal = async (deal) => {
+    if (!confirm("Delete deal " + deal.deal_number + "? This cannot be undone.")) return;
+    try {
+      const res = await fetch("/api/deals/" + deal.id, { method: "DELETE" });
+      if (res.ok) loadDeals();
+      else { const d = await res.json(); alert(d.error || "Failed to delete"); }
+    } catch (err) { alert("Error: " + err.message); }
+  };
 
   if (loading) return <div style={S.page}><Loading text="Loading GTM..." /></div>;
 
   const renderPage = () => {
     switch (page) {
       case "dashboard": return <DashboardView deals={deals} onNav={(p, d) => d ? openDeal(d) : setPage(p)} />;
-      case "deals": return <DealsList deals={deals} onOpenDeal={openDeal} onNewDeal={newDeal} />;
+      case "deals": return <DealsList deals={deals} onOpenDeal={openDeal} onNewDeal={newDeal} onDeleteDeal={deleteDeal} />;
       case "precalc": return <PreCalcScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
       case "customs": return <div style={S.card}><div style={{ textAlign: "center", padding: 40, color: "#888" }}>Customs Intelligence - Coming Soon</div></div>;
-      case "postcalc": return <div style={S.card}><div style={{ textAlign: "center", padding: 40, color: "#888" }}>Post-Trade Analytics - Coming Soon</div></div>;
+      case "postcalc": return <PostCalcScreen deals={deals} />;
       default: return <DashboardView deals={deals} onNav={setPage} />;
     }
   };
