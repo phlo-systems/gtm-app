@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { useRouter } from "next/navigation";
 import { calculateIncotermGap, INCOTERMS_2020 } from "@/lib/incoterms";
+import { WORLD_PORTS, getEstimatedVoyages } from "@/lib/ports";
 
 const S = {
   page: { fontFamily: "'Segoe UI', -apple-system, sans-serif", background: "#F8F7F4", minHeight: "100vh", color: "#1A1A1A" },
@@ -65,6 +66,52 @@ function ComboBox({ label, value, options, onSelect, onCreate, disabled, placeho
           {filtered.length === 0 && !search.trim() && (
             <div style={{ padding: "8px 12px", fontSize: 12, color: "#AAA" }}>No items yet. Type to create.</div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Port ComboBox: searchable port selector with UN/LOCODE ── */
+function PortComboBox({ label, value, onSelect, disabled, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = search.length >= 2
+    ? WORLD_PORTS.filter(p => (p.name + " " + p.country + " " + p.code).toLowerCase().includes(search.toLowerCase())).slice(0, 15)
+    : [];
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>{label}</label>
+      <input
+        style={{ ...S.input, background: disabled ? "#F0EDE6" : "#FFF", borderColor: open ? "#1B4332" : "#D5D0C6", fontFamily: value ? "monospace" : "inherit" }}
+        readOnly={disabled}
+        placeholder={placeholder || "Type port name or code..."}
+        value={open ? search : value ? (value.code + " - " + value.name) : ""}
+        onFocus={() => { if (!disabled) { setOpen(true); setSearch(""); } }}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      {open && !disabled && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#FFF", border: "1px solid #D5D0C6", borderRadius: "0 0 6px 6px", maxHeight: 220, overflowY: "auto", zIndex: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
+          {search.length < 2 && <div style={{ padding: "8px 12px", fontSize: 11, color: "#AAA" }}>Type at least 2 characters to search ports...</div>}
+          {filtered.map((p) => (
+            <div key={p.code} onClick={() => { onSelect(p); setOpen(false); setSearch(""); }}
+              style={{ padding: "6px 12px", fontSize: 12, cursor: "pointer", borderBottom: "1px solid #F0EDE6" }}
+              onMouseOver={(e) => e.target.style.background = "#F0FFF4"}
+              onMouseOut={(e) => e.target.style.background = "#FFF"}>
+              <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#1B4332", marginRight: 6 }}>{p.code}</span>
+              {p.name} <span style={{ color: "#888", fontSize: 10 }}>({p.country})</span>
+            </div>
+          ))}
+          {search.length >= 2 && filtered.length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: "#AAA" }}>No ports found for "{search}"</div>}
         </div>
       )}
     </div>
@@ -365,6 +412,9 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
   const [freightData, setFreightData] = useState(null);
   const [customsData, setCustomsData] = useState(null);
   const [customsLoading, setCustomsLoading] = useState(false);
+  const [hsSuggestions, setHsSuggestions] = useState(null);
+  const [hsLoading, setHsLoading] = useState(false);
+  const [voyages, setVoyages] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -385,6 +435,16 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
     hs_code: deal?.hs_code || deal?.product?.hs_code || "",
     cost_currency: deal?.cost_currency || "USD",
     customer_payment_terms: deal?.customer_payment_terms || "Net 60",
+    supplier_payment_terms: deal?.supplier_payment_terms || "Net 30",
+    quantity: deal?.quantity || "",
+    quantity_unit: deal?.quantity_unit || "MT",
+    selling_price: deal?.selling_price || "",
+    expected_shipment_date: deal?.expected_shipment_date || "",
+    sales_currency: deal?.sales_currency || "USD",
+    port_of_origin: deal?.port_of_origin ? WORLD_PORTS.find(p => p.code === deal.port_of_origin) : null,
+    port_of_dest: deal?.port_of_dest ? WORLD_PORTS.find(p => p.code === deal.port_of_dest) : null,
+    supplier_inland_address: deal?.supplier_inland_address || "",
+    customer_inland_address: deal?.customer_inland_address || "",
   });
   const gap = calculateIncotermGap(form.buy_incoterm, form.sell_incoterm);
   const f = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -476,9 +536,37 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
     if (fe.dest_inland > 0) freightLines.push({ line_item: "Destination Inland Transport", amount: fe.dest_inland, block: "B", responsibility: "Trader" });
     if (fe.cargo_insurance > 0) freightLines.push({ line_item: "Cargo Insurance", amount: fe.cargo_insurance, block: "B", responsibility: "Trader" });
     if (fe.documentation > 0) freightLines.push({ line_item: "Freight Documentation", amount: fe.documentation, block: "B", responsibility: "Trader" });
+
+    // Update existing Block B lines by matching names, or replace all Block B
+    if (costMatrix && costMatrix.cost_lines) {
+      const existingB = costMatrix.cost_lines.filter(l => l.block === "B");
+      if (existingB.length > 0) {
+        // Update existing Block B amounts to 0 (clear them)
+        const updates = {};
+        existingB.forEach(l => { updates[l.id] = 0; });
+        setEditedAmounts(prev => ({ ...prev, ...updates }));
+      }
+    }
+    // Add freight lines as new (they'll be saved as Block B via the PUT endpoint)
     setNewLines(prev => [...prev, ...freightLines]);
     setCostDirty(true);
     setStep(2);
+  };
+
+  const suggestHsCode = async () => {
+    if (!form.product_name) return;
+    setHsLoading(true);
+    try {
+      const res = await fetch("/api/suggest-hs-code?product=" + encodeURIComponent(form.product_name));
+      if (res.ok) { const data = await res.json(); setHsSuggestions(data.suggestions); }
+    } catch {}
+    setHsLoading(false);
+  };
+
+  const fetchVoyages = () => {
+    if (!form.port_of_origin || !form.port_of_dest) return;
+    const result = getEstimatedVoyages(form.port_of_origin.code, form.port_of_dest.code);
+    setVoyages(result);
   };
 
   const applyCustomsToCostMatrix = () => {
@@ -506,6 +594,117 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
     setSaving(false);
   };
 
+  const generatePOSO = async () => {
+    // Load SheetJS from CDN
+    if (!window.XLSX) {
+      const s = document.createElement("script");
+      s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+      document.head.appendChild(s);
+      await new Promise(r => { s.onload = r; });
+    }
+    const XLSX = window.XLSX;
+    const wb = XLSX.utils.book_new();
+    const now = new Date().toISOString().split("T")[0];
+    const dn = deal?.deal_number || "DRAFT";
+    const cl = costMatrix?.cost_lines || [];
+    const totalCost = cl.filter(l => l.is_active !== false).reduce((s, l) => s + (l.amount || 0), 0);
+
+    // ── Purchase Order sheet ──
+    const poData = [
+      ["PURCHASE ORDER"],
+      [""],
+      ["PO Reference:", dn + "-PO"],
+      ["Date:", now],
+      ["Status:", deal?.status || "draft"],
+      [""],
+      ["SUPPLIER DETAILS"],
+      ["Supplier:", form.supplier_name],
+      ["Buy Incoterm:", form.buy_incoterm + " " + form.buy_location],
+      ["Port of Loading:", form.port_of_origin ? form.port_of_origin.code + " - " + form.port_of_origin.name : form.buy_location],
+      ["Payment Terms:", form.supplier_payment_terms],
+      [""],
+      ["PRODUCT DETAILS"],
+      ["Product:", form.product_name],
+      ["HS Code:", form.hs_code],
+      ["Quantity:", form.quantity + " " + form.quantity_unit],
+      ["Unit Price:", form.cost_currency + " " + (form.unit_price || 0)],
+      ["Total Value:", form.cost_currency + " " + ((parseFloat(form.unit_price) || 0) * (parseFloat(form.quantity) || 0)).toLocaleString()],
+      ["Expected Shipment:", form.expected_shipment_date],
+      ["Transport Mode:", form.transport_mode],
+      [""],
+      ["COST BREAKDOWN"],
+      ["Block", "Cost Line", "Type", "Amount (USD)"],
+    ];
+    cl.sort((a, b) => a.sort_order - b.sort_order).forEach(c => {
+      if (c.is_active !== false) poData.push([c.block, c.line_item, c.cost_type, c.amount || 0]);
+    });
+    poData.push(["", "", "TOTAL COS", totalCost]);
+    poData.push([""]);
+    poData.push(["Generated by GTM - Phlo Systems | " + now]);
+
+    const poSheet = XLSX.utils.aoa_to_sheet(poData);
+    poSheet["!cols"] = [{ wch: 18 }, { wch: 35 }, { wch: 18 }, { wch: 15 }];
+    XLSX.utils.book_append_sheet(wb, poSheet, "Purchase Order");
+
+    // ── Sales Order sheet ──
+    const soData = [
+      ["SALES ORDER"],
+      [""],
+      ["SO Reference:", dn + "-SO"],
+      ["Date:", now],
+      ["Status:", deal?.status || "draft"],
+      [""],
+      ["CUSTOMER DETAILS"],
+      ["Customer:", form.customer_name],
+      ["Sell Incoterm:", form.sell_incoterm + " " + form.sell_location],
+      ["Port of Discharge:", form.port_of_dest ? form.port_of_dest.code + " - " + form.port_of_dest.name : form.sell_location],
+      ["Payment Terms:", form.customer_payment_terms],
+      form.customer_inland_address ? ["Delivery Address:", form.customer_inland_address] : [],
+      [""],
+      ["PRODUCT DETAILS"],
+      ["Product:", form.product_name],
+      ["HS Code:", form.hs_code],
+      ["Quantity:", form.quantity + " " + form.quantity_unit],
+      ["Selling Price:", form.sales_currency + " " + (form.selling_price || 0) + " per " + form.quantity_unit],
+      ["Total Sales Value:", form.sales_currency + " " + ((parseFloat(form.selling_price) || 0) * (parseFloat(form.quantity) || 0)).toLocaleString()],
+      [""],
+      ["MARGIN SUMMARY"],
+      ["Total COS:", "USD " + totalCost.toLocaleString()],
+      ["Sales Revenue:", form.sales_currency + " " + ((parseFloat(form.selling_price) || 0) * (parseFloat(form.quantity) || 0)).toLocaleString()],
+      ["Gross Margin:", (costMatrix?.gross_margin_pct || 0).toFixed(1) + "%"],
+      [""],
+      ["SHIPMENT"],
+      ["Expected Shipment:", form.expected_shipment_date],
+      ["Transport Mode:", form.transport_mode],
+      ["Origin:", form.buy_location],
+      ["Destination:", form.sell_location],
+      [""],
+      ["Generated by GTM - Phlo Systems | " + now],
+    ].filter(r => r.length > 0);
+
+    const soSheet = XLSX.utils.aoa_to_sheet(soData);
+    soSheet["!cols"] = [{ wch: 20 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, soSheet, "Sales Order");
+
+    // ── Cost Matrix sheet ──
+    const cmData = [
+      ["COST MATRIX - " + dn],
+      [""],
+      ["Block", "Cost Line", "Type", "Amount (USD)", "Responsibility", "Active"],
+    ];
+    cl.sort((a, b) => a.sort_order - b.sort_order).forEach(c => {
+      cmData.push([c.block, c.line_item, c.cost_type, c.amount || 0, c.responsibility, c.is_active !== false ? "Yes" : "No"]);
+    });
+    cmData.push(["", "", "", ""]);
+    cmData.push(["", "", "TOTAL", totalCost]);
+
+    const cmSheet = XLSX.utils.aoa_to_sheet(cmData);
+    cmSheet["!cols"] = [{ wch: 8 }, { wch: 35 }, { wch: 18 }, { wch: 15 }, { wch: 14 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, cmSheet, "Cost Matrix");
+
+    XLSX.writeFile(wb, dn + "_PO_SO_" + now + ".xlsx");
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -524,6 +723,7 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
           {isDraft && deal?.id && costMatrix && <button style={S.btn(true)} onClick={() => doAction("submit")} disabled={saving}>Submit for Approval</button>}
           {deal?.status === "submitted" && <button style={{ ...S.btn(true), background: "#1B7A43" }} onClick={() => doAction("approve")} disabled={saving}>Approve</button>}
           {deal?.status === "submitted" && <button style={{ ...S.btn(false), color: "#C62828" }} onClick={() => doAction("reject")} disabled={saving}>Reject</button>}
+          {deal?.status === "approved" && <button style={{ ...S.btn(true), background: "#0D47A1" }} onClick={generatePOSO}>Download PO/SO (Excel)</button>}
         </div>
       </div>
 
@@ -542,6 +742,11 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Trade Type</label><select style={S.select} disabled={!isDraft} value={form.trade_type} onChange={f("trade_type")}><option value="cross_border_direct">Cross-Border (Direct)</option><option value="cross_border_intermediated">Cross-Border (Intermediated)</option><option value="domestic">Domestic</option><option value="transit_reexport">Transit / Re-Export</option></select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Transport</label><select style={S.select} disabled={!isDraft} value={form.transport_mode} onChange={f("transport_mode")}><option value="ocean">Ocean</option><option value="road">Road</option><option value="air">Air</option></select></div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 6 }}>
+                <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Quantity</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} type="number" value={form.quantity} onChange={f("quantity")} placeholder="e.g. 100" /></div>
+                <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Unit</label><select style={S.select} disabled={!isDraft} value={form.quantity_unit} onChange={f("quantity_unit")}><option>MT</option><option>KG</option><option>CBM</option><option>Units</option><option>Containers</option><option>Bags</option><option>Drums</option></select></div>
+              </div>
+              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Expected Shipment Date</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} type="date" value={form.expected_shipment_date} onChange={f("expected_shipment_date")} /></div>
               <ComboBox
                 label="Product"
                 value={form.product_name}
@@ -568,7 +773,12 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Buy Incoterm</label><select style={S.select} disabled={!isDraft} value={form.buy_incoterm} onChange={f("buy_incoterm")}>{INCOTERMS_2020.map(t => <option key={t.code} value={t.code}>{t.code} - {t.name}</option>)}</select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Location</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.buy_location} onChange={f("buy_location")} placeholder="e.g. Mumbai" /></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Unit Price ({form.cost_currency})</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.unit_price} onChange={f("unit_price")} type="number" step="0.01" placeholder="0.00" /></div>
-              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>HS Code</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.hs_code} onChange={f("hs_code")} placeholder="0000.00.00" /></div>
+              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>HS Code</label><div style={{ display: "flex", gap: 4 }}><input style={{ ...S.input, flex: 1, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.hs_code} onChange={f("hs_code")} placeholder="0000.00.00" />{isDraft && form.product_name && <button style={{ ...S.btn(false), padding: "4px 8px", fontSize: 11, whiteSpace: "nowrap" }} onClick={suggestHsCode} disabled={hsLoading}>{hsLoading ? "..." : "Suggest"}</button>}</div>
+              {hsSuggestions && <div style={{ marginTop: 4 }}>{hsSuggestions.map((s,i) => <div key={i} onClick={() => { setForm({...form, hs_code: s.hs_code}); setHsSuggestions(null); }} style={{ fontSize: 10, padding: "3px 6px", cursor: "pointer", background: "#F0F7FF", borderRadius: 4, marginTop: 2, border: "1px solid #B8D4F0" }}><strong>{s.hs_code}</strong> {s.description} <span style={{ color: "#888" }}>({s.confidence})</span></div>)}</div>}
+              </div>
+              {form.transport_mode === "ocean" && <PortComboBox label="Port of Loading" value={form.port_of_origin} disabled={!isDraft} placeholder="e.g. INNSA, Mumbai..." onSelect={(p) => setForm({ ...form, port_of_origin: p, buy_location: p.name + ", " + p.country })} />}
+              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Supplier Payment Terms</label><select style={S.select} disabled={!isDraft} value={form.supplier_payment_terms} onChange={f("supplier_payment_terms")}><option>Net 30</option><option>Net 60</option><option>Net 90</option><option>LC at Sight</option><option>LC 30 Days</option><option>LC 60 Days</option><option>TT Advance</option><option>CAD</option></select></div>
+              {["EXW", "FCA"].includes(form.buy_incoterm) && <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Supplier Inland Address</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.supplier_inland_address} onChange={f("supplier_inland_address")} placeholder="Factory/warehouse address for pickup" /></div>}
             </div>
           </div>
           <div style={S.card}>
@@ -585,7 +795,13 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
               />
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Sell Incoterm</label><select style={S.select} disabled={!isDraft} value={form.sell_incoterm} onChange={f("sell_incoterm")}>{INCOTERMS_2020.map(t => <option key={t.code} value={t.code}>{t.code} - {t.name}</option>)}</select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Location</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.sell_location} onChange={f("sell_location")} placeholder="e.g. Durban" /></div>
-              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Currency</label><select style={S.select} disabled={!isDraft} value={form.cost_currency} onChange={f("cost_currency")}><option>USD</option><option>ZAR</option><option>GBP</option><option>EUR</option><option>AED</option></select></div>
+              {form.transport_mode === "ocean" && <PortComboBox label="Port of Discharge" value={form.port_of_dest} disabled={!isDraft} placeholder="e.g. ZADUR, Durban..." onSelect={(p) => setForm({ ...form, port_of_dest: p, sell_location: p.name + ", " + p.country })} />}
+              {["DAP", "DPU", "DDP"].includes(form.sell_incoterm) && <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Customer Inland Address</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} value={form.customer_inland_address} onChange={f("customer_inland_address")} placeholder="Delivery address for inland transport" /></div>}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 6 }}>
+                <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Selling Price (per {form.quantity_unit})</label><input style={{ ...S.input, background: isDraft ? "#FFF" : "#F0EDE6" }} readOnly={!isDraft} type="number" step="0.01" value={form.selling_price} onChange={f("selling_price")} placeholder="0.00" /></div>
+                <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Currency</label><select style={S.select} disabled={!isDraft} value={form.sales_currency} onChange={f("sales_currency")}><option>USD</option><option>ZAR</option><option>GBP</option><option>EUR</option><option>AED</option></select></div>
+              </div>
+              <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Cost Currency</label><select style={S.select} disabled={!isDraft} value={form.cost_currency} onChange={f("cost_currency")}><option>USD</option><option>ZAR</option><option>GBP</option><option>EUR</option><option>AED</option></select></div>
               <div><label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>Payment Terms</label><select style={S.select} disabled={!isDraft} value={form.customer_payment_terms} onChange={f("customer_payment_terms")}><option>Net 60</option><option>Net 30</option><option>LC at Sight</option></select></div>
             </div>
           </div>
@@ -759,6 +975,36 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
               <div style={{ padding: 24, textAlign: "center", color: "#AAA", fontSize: 13 }}>Click "Fetch Customs Estimate" to get duty and tax rates for {form.sell_location}.</div>
             )}
           </div>
+
+          {form.transport_mode === "ocean" && form.port_of_origin && form.port_of_dest && (
+            <div style={S.card}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Estimated Sailing Schedules</div>
+                <button style={S.btn(false)} onClick={fetchVoyages}>Refresh Schedules</button>
+              </div>
+              {!voyages ? (
+                <div style={{ padding: 24, textAlign: "center", color: "#AAA", fontSize: 13 }}>Select ports of loading and discharge, then click Refresh.</div>
+              ) : !voyages.found ? (
+                <div style={{ padding: 16, background: "#FFF8E1", borderRadius: 6, fontSize: 12, color: "#666" }}>{voyages.message}</div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Sailings every ~{voyages.frequency_days} days on this route</div>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr><th style={S.th}>Carrier</th><th style={S.th}>Departure</th><th style={S.th}>Arrival</th><th style={S.th}>Transit</th></tr></thead>
+                    <tbody>{voyages.voyages.map((v, i) => (
+                      <tr key={i}>
+                        <td style={{ ...S.td, fontWeight: 700, color: "#1B4332" }}>{v.carrier}</td>
+                        <td style={S.td}>{v.departure}</td>
+                        <td style={S.td}>{v.arrival}</td>
+                        <td style={S.td}>{v.transit_days} days</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  <div style={{ fontSize: 9, color: "#BBB", marginTop: 8, fontStyle: "italic" }}>Estimated schedules based on typical sailing patterns. Actual schedules vary by carrier.</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
