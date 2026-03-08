@@ -888,28 +888,129 @@ function PreCalcScreen({ deal, onBack, onSaved }) {
       {step === 3 && (
         <div>
           <div style={S.card}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Feasibility</div>
-            {costMatrix ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  {[{ l: "Supplier (A)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="A").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
-                    { l: "Incoterm Gap (B)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="B").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
-                    { l: "Business Charges (C)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="C").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) },
-                    { l: "Additional Costs (D)", v: (costMatrix.cost_lines||[]).filter(l=>l.block==="D").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0) },
-                    { l: "Total COS", v: (costMatrix.cost_lines||[]).filter(l=>l.is_active!==false).reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0), bold: true }
-                  ].filter(r => r.v > 0 || r.bold).map((r,i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: r.bold ? "2px solid #1B4332" : "1px solid #F0EDE6" }}>
-                      <span style={{ fontSize: 13, fontWeight: r.bold ? 700 : 400 }}>{r.l}</span>
-                      <span style={{ fontFamily: "monospace", fontWeight: r.bold ? 800 : 600 }}>${r.v.toLocaleString()}</span>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Deal P&L / Feasibility</div>
+            {costMatrix ? (() => {
+              // Helper: payment terms to days
+              const termsToDays = (t) => {
+                if (!t) return 30;
+                const m = { "TT Advance": 0, "CAD": 0, "LC at Sight": 7, "Net 30": 30, "LC 30 Days": 30, "Net 60": 60, "LC 60 Days": 60, "Net 90": 90 };
+                return m[t] !== undefined ? m[t] : 30;
+              };
+
+              const qty = parseFloat(form.quantity) || 0;
+              const sellPx = parseFloat(form.selling_price) || 0;
+              const salesRevenue = sellPx * qty;
+
+              const blockA = (costMatrix.cost_lines||[]).filter(l=>l.block==="A").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0);
+              const blockB = (costMatrix.cost_lines||[]).filter(l=>l.block==="B").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0);
+              const blockC = (costMatrix.cost_lines||[]).filter(l=>l.block==="C").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0);
+              const blockD = (costMatrix.cost_lines||[]).filter(l=>l.block==="D").reduce((s,l)=>s+(editedAmounts[l.id]!==undefined?parseFloat(editedAmounts[l.id])||0:l.amount||0),0) + newLines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0);
+              const totalCOS = blockA + blockB + blockC + blockD;
+              const grossProfit = salesRevenue - totalCOS;
+              const grossMarginPct = salesRevenue > 0 ? (grossProfit / salesRevenue) * 100 : 0;
+
+              // Finance cost: based on payment terms gap
+              const supplierDays = termsToDays(form.supplier_payment_terms);
+              const customerDays = termsToDays(form.customer_payment_terms);
+              const financingDays = Math.max(0, customerDays - supplierDays);
+              const annualRate = 0.12; // 12% p.a.
+              const financeCost = financingDays > 0 ? Math.round(totalCOS * annualRate * financingDays / 365) : 0;
+
+              const netProfit = grossProfit - financeCost;
+              const netMarginPct = salesRevenue > 0 ? (netProfit / salesRevenue) * 100 : 0;
+
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 20 }}>
+                  <div>
+                    {/* Revenue */}
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#1B4332", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6 }}>Revenue</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "2px solid #1B4332" }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>Sales Revenue ({qty} {form.quantity_unit} x {form.sales_currency} {sellPx})</span>
+                      <span style={{ fontFamily: "monospace", fontWeight: 800, color: "#1B7A43" }}>{form.sales_currency} {salesRevenue.toLocaleString()}</span>
                     </div>
-                  ))}
+
+                    {/* Cost of Sales */}
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.5px", marginTop: 12, marginBottom: 6 }}>Cost of Sales</div>
+                    {[
+                      { l: "Supplier Cost (A)", v: blockA },
+                      { l: "Freight & Logistics (B)", v: blockB },
+                      { l: "Business Charges (C)", v: blockC },
+                      { l: "Customs & Additional (D)", v: blockD },
+                    ].filter(r => r.v > 0).map((r,i) => (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #F0EDE6" }}>
+                        <span style={{ fontSize: 13 }}>{r.l}</span>
+                        <span style={{ fontFamily: "monospace", color: "#C62828" }}>({r.v.toLocaleString()})</span>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "2px solid #333", marginTop: 2 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>Total COS</span>
+                      <span style={{ fontFamily: "monospace", fontWeight: 800, color: "#C62828" }}>({totalCOS.toLocaleString()})</span>
+                    </div>
+
+                    {/* Gross Profit */}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", background: grossProfit >= 0 ? "#F0FFF4" : "#FFF5F5", margin: "4px -8px", paddingLeft: 8, paddingRight: 8, borderRadius: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>Gross Profit</span>
+                      <span style={{ fontFamily: "monospace", fontWeight: 800, color: grossProfit >= 0 ? "#1B7A43" : "#C62828" }}>{form.sales_currency} {grossProfit.toLocaleString()} <span style={{ fontSize: 11, fontWeight: 600 }}>({grossMarginPct.toFixed(1)}%)</span></span>
+                    </div>
+
+                    {/* Finance Cost */}
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.5px", marginTop: 12, marginBottom: 6 }}>Finance Cost</div>
+                    <div style={{ padding: "8px 10px", background: "#F5F5F5", borderRadius: 6, fontSize: 12, marginBottom: 4 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ color: "#666" }}>Supplier terms: <strong>{form.supplier_payment_terms}</strong> ({supplierDays} days)</span>
+                        <span style={{ color: "#666" }}>Customer terms: <strong>{form.customer_payment_terms}</strong> ({customerDays} days)</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ color: "#666" }}>Financing period: <strong>{financingDays} days</strong> {financingDays > 0 ? "(trader funds the gap)" : "(no financing needed)"}</span>
+                        <span style={{ color: "#666" }}>Rate: <strong>12% p.a.</strong> = {(annualRate * financingDays / 365 * 100).toFixed(2)}% for {financingDays}d</span>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #F0EDE6" }}>
+                      <span style={{ fontSize: 13 }}>Finance Cost ({financingDays}d @ 12% p.a. on {form.cost_currency} {totalCOS.toLocaleString()})</span>
+                      <span style={{ fontFamily: "monospace", color: financeCost > 0 ? "#C62828" : "#888" }}>{financeCost > 0 ? "(" + financeCost.toLocaleString() + ")" : "\u2014"}</span>
+                    </div>
+
+                    {/* Net Profit */}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", marginTop: 4, borderTop: "3px double #1B4332" }}>
+                      <span style={{ fontSize: 14, fontWeight: 800 }}>Net Profit</span>
+                      <span style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 16, color: netProfit >= 0 ? "#1B7A43" : "#C62828" }}>{form.sales_currency} {netProfit.toLocaleString()} <span style={{ fontSize: 12 }}>({netMarginPct.toFixed(1)}%)</span></span>
+                    </div>
+                  </div>
+
+                  {/* Right side: Summary cards */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ padding: 16, background: netProfit >= 0 ? "#F0FFF4" : "#FFF5F5", borderRadius: 8, border: "1px solid " + (netProfit >= 0 ? "#C6E6D0" : "#E6C6C6"), textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Net Margin</div>
+                      <div style={{ fontSize: 32, fontWeight: 800, color: netMarginPct >= 5 ? "#1B7A43" : netMarginPct >= 0 ? "#D4A017" : "#C62828" }}>{netMarginPct.toFixed(1)}%</div>
+                      <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>{netMarginPct >= 8 ? "\u2713 Strong margin" : netMarginPct >= 5 ? "\u26A0 Acceptable" : netMarginPct >= 0 ? "\u26A0 Thin margin" : "\u2717 Loss-making"}</div>
+                    </div>
+                    <div style={{ padding: 12, background: "#FFF", borderRadius: 8, border: "1px solid #E8E4DC" }}>
+                      <div style={{ fontSize: 10, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Gross Margin</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: "#1B4332" }}>{grossMarginPct.toFixed(1)}%</div>
+                    </div>
+                    <div style={{ padding: 12, background: "#FFF", borderRadius: 8, border: "1px solid #E8E4DC" }}>
+                      <div style={{ fontSize: 10, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Finance Cost</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: financeCost > 0 ? "#D4A017" : "#888" }}>{form.cost_currency} {financeCost.toLocaleString()}</div>
+                      <div style={{ fontSize: 10, color: "#AAA" }}>{financingDays}d financing @ 12% p.a.</div>
+                    </div>
+                    <div style={{ padding: 12, background: "#FFF", borderRadius: 8, border: "1px solid #E8E4DC" }}>
+                      <div style={{ fontSize: 10, color: "#888", fontWeight: 600, textTransform: "uppercase" }}>Revenue vs Cost</div>
+                      <div style={{ marginTop: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                          <div style={{ flex: 1, background: "#E8E4DC", borderRadius: 3, height: 8, overflow: "hidden" }}><div style={{ width: "100%", height: "100%", background: "#1B7A43", borderRadius: 3 }} /></div>
+                          <span style={{ fontSize: 10, fontFamily: "monospace", color: "#1B7A43" }}>{form.sales_currency} {salesRevenue.toLocaleString()}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ flex: 1, background: "#E8E4DC", borderRadius: 3, height: 8, overflow: "hidden" }}><div style={{ width: salesRevenue > 0 ? Math.min(100, (totalCOS + financeCost) / salesRevenue * 100) + "%" : "0%", height: "100%", background: "#C62828", borderRadius: 3 }} /></div>
+                          <span style={{ fontSize: 10, fontFamily: "monospace", color: "#C62828" }}>{form.cost_currency} {(totalCOS + financeCost).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {!salesRevenue && <div style={{ padding: 12, background: "#FFF8E1", borderRadius: 8, border: "1px solid #FFD54F", fontSize: 12, color: "#666" }}>{"\u26A0"} Enter selling price and quantity in the Deal Sheet to see the full P&L.</div>}
+                  </div>
                 </div>
-                <div style={{ padding: 16, background: (costMatrix.gross_margin_pct||0) >= 8 ? "#F0FFF4" : "#FFF5F5", borderRadius: 8, border: "1px solid " + ((costMatrix.gross_margin_pct||0) >= 8 ? "#C6E6D0" : "#E6C6C6") }}>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: (costMatrix.gross_margin_pct||0) >= 8 ? "#1B7A43" : "#C62828" }}>{(costMatrix.gross_margin_pct||0).toFixed(1)}%</div>
-                  <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{(costMatrix.gross_margin_pct||0) >= 8 ? "\u2713 Margin check passed" : "\u2717 Below threshold (8%)"}</div>
-                </div>
-              </div>
-            ) : (
+              );
+            })() : (
               <div style={{ textAlign: "center", padding: 32, color: "#888" }}>Generate a cost matrix first.</div>
             )}
           </div>
