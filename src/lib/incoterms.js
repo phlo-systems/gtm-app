@@ -88,14 +88,14 @@ export function generateCostMatrix(deal, businessCharges = []) {
   const lines = [];
   let sortOrder = 0;
   
-  // Block A: Base supplier cost = quantity * unit price
-  const supplierCost = (deal.unit_price || 0) * (deal.quantity || 1);
+  // Block A: Base supplier cost
+  const supplierCostPerContainer = (deal.unit_price || 0) * (deal.units_per_case || 100) * (deal.cases_per_container || 100);
   lines.push({
     block: 'A',
-    line_item: `Supplier Cost (${deal.buy_incoterm || 'FOB'} ${deal.buy_location || ''}) — ${deal.quantity || 1} ${deal.quantity_unit || 'MT'} @ ${deal.cost_currency || 'USD'} ${deal.unit_price || 0}`,
+    line_item: `Supplier Quote (${deal.buy_incoterm || 'FOB'})`,
     cost_type: 'base',
     calc_type: 'fixed',
-    amount: supplierCost,
+    amount: supplierCostPerContainer || deal.unit_price || 0,
     amount_per_unit: deal.unit_price || 0,
     currency: deal.cost_currency || 'USD',
     source: 'manual',
@@ -136,7 +136,7 @@ export function generateCostMatrix(deal, businessCharges = []) {
     if (charge.calc_type === 'fixed') {
       amount = charge.default_value;
     } else if (charge.calc_type === 'percentage') {
-      amount = (supplierCost * charge.default_value) / 100;
+      amount = (supplierCostPerContainer * charge.default_value) / 100;
     }
     
     lines.push({
