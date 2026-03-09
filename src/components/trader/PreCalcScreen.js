@@ -16,6 +16,7 @@
 import { useState, useEffect } from 'react';
 import { S, statusColor } from '@/components/shared/styles';
 import { calculateIncotermGap, INCOTERMS_2020 } from '@/lib/incoterms';
+import VoyageSearch from './VoyageSearch';
 
 export default function PreCalcScreen({ deal, onBack, onSaved }) {
   const isNew = !deal;
@@ -23,6 +24,7 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [costMatrix, setCostMatrix] = useState(null);
   const [step, setStep] = useState(1);
+  const [appliedVoyage, setAppliedVoyage] = useState(null);
   const [form, setForm] = useState({
     trade_type: deal?.trade_type || "cross_border_direct",
     transport_mode: deal?.transport_mode || "ocean",
@@ -82,6 +84,29 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
       else { const d = await res.json(); alert(d.error); }
     } catch (err) { alert("Error: " + err.message); }
     setSaving(false);
+  };
+
+  // Handle voyage selection — replace Block B cost lines with voyage rates
+  const handleVoyageApply = ({ costs, voyage }) => {
+    if (!costMatrix) return;
+    // Remove existing Block B lines and replace with voyage costs
+    const nonBLines = (costMatrix.cost_lines || []).filter(l => l.block !== "B");
+    const newBLines = costs.map((c, i) => ({
+      ...c,
+      sort_order: 100 + i,
+      responsibility: "trader",
+      is_active: true,
+      currency: form.cost_currency,
+    }));
+    const allLines = [...nonBLines, ...newBLines];
+    const newTotal = allLines.reduce((s, l) => s + (l.amount || 0), 0);
+    setCostMatrix({
+      ...costMatrix,
+      cost_lines: allLines,
+      total_cost: newTotal,
+      gross_margin_pct: costMatrix.selling_price > 0 ? ((costMatrix.selling_price - newTotal) / costMatrix.selling_price) * 100 : 0,
+    });
+    setAppliedVoyage(voyage);
   };
 
   const inputStyle = (editable) => ({ ...S.input, background: editable ? "#FFF" : "#F0EDE6" });
@@ -167,33 +192,63 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
 
       {/* Step 2: Cost Matrix */}
       {step === 2 && (
-        <div style={S.card}>
-          {!costMatrix ? (
-            <div style={{ textAlign: "center", padding: 40 }}>
-              <div style={{ fontSize: 14, color: "#888", marginBottom: 16 }}>No cost matrix yet.</div>
-              {isDraft && deal?.id && <button style={S.btn(true)} onClick={genMatrix} disabled={saving}>Generate Cost Matrix</button>}
-              {!deal?.id && <div style={{ fontSize: 12, color: "#AAA" }}>Save the deal first.</div>}
-            </div>
-          ) : (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Cost Matrix</div>
-                <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: "#888" }}>Total COS</div><div style={{ fontSize: 20, fontWeight: 800, color: "#1B4332" }}>${(costMatrix.total_cost || 0).toLocaleString()}</div></div>
-              </div>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><th style={{ ...S.th, width: 40 }}>Blk</th><th style={S.th}>Cost Line</th><th style={S.th}>Type</th><th style={{ ...S.th, textAlign: "right" }}>Amount</th><th style={S.th}>Resp.</th></tr></thead>
-                <tbody>{(costMatrix.cost_lines || []).sort((a, b) => a.sort_order - b.sort_order).map((c, i) => (
-                  <tr key={i}>
-                    <td style={{ ...S.td, fontWeight: 700, color: c.block === "A" ? "#1B7A43" : c.block === "B" ? "#D4A017" : "#6B2D5B" }}>{c.block}</td>
-                    <td style={{ ...S.td, fontWeight: c.block === "A" ? 700 : 400 }}>{c.line_item}</td>
-                    <td style={S.td}><span style={S.badge(c.cost_type === "base" ? "#1B7A43" : c.cost_type === "incoterm_gap" ? "#D4A017" : "#6B2D5B")}>{c.cost_type.replace("_", " ")}</span></td>
-                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>${(c.amount || 0).toLocaleString()}</td>
-                    <td style={S.td}>{c.responsibility}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </>
+        <div>
+          {/* Voyage Search - shown when cost matrix exists */}
+          {costMatrix && isDraft && (
+            <VoyageSearch
+              origin={form.buy_location}
+              destination={form.sell_location}
+              onApply={handleVoyageApply}
+              currency={form.cost_currency}
+            />
           )}
+
+          {/* Applied Voyage Banner */}
+          {appliedVoyage && (
+            <div style={{ ...S.card, background: "#F0FFF4", border: "1px solid #C6E6D0", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1B7A43" }}>{"\u2713"} Voyage Applied to Cost Matrix</div>
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+                    {appliedVoyage.carrier} {"\u2022"} {appliedVoyage.vessel} ({appliedVoyage.voyage_number})
+                    {" \u2022 "} ETD: {appliedVoyage.etd} {" \u2022 "} ETA: {appliedVoyage.eta} ({appliedVoyage.transit_days} days)
+                    {" \u2022 "} {appliedVoyage.container_type}: ${appliedVoyage.total?.toLocaleString()}
+                  </div>
+                </div>
+                <button style={{ ...S.btn(false), fontSize: 11, padding: "4px 12px" }} onClick={() => setAppliedVoyage(null)}>Clear</button>
+              </div>
+            </div>
+          )}
+
+          <div style={S.card}>
+            {!costMatrix ? (
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ fontSize: 14, color: "#888", marginBottom: 16 }}>No cost matrix yet.</div>
+                {isDraft && deal?.id && <button style={S.btn(true)} onClick={genMatrix} disabled={saving}>Generate Cost Matrix</button>}
+                {!deal?.id && <div style={{ fontSize: 12, color: "#AAA" }}>Save the deal first.</div>}
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>Cost Matrix</div>
+                  <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: "#888" }}>Total COS</div><div style={{ fontSize: 20, fontWeight: 800, color: "#1B4332" }}>${(costMatrix.total_cost || 0).toLocaleString()}</div></div>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr><th style={{ ...S.th, width: 40 }}>Blk</th><th style={S.th}>Cost Line</th><th style={S.th}>Type</th><th style={{ ...S.th, textAlign: "right" }}>Amount</th><th style={S.th}>Resp.</th><th style={{ ...S.th, width: 50 }}>Src</th></tr></thead>
+                  <tbody>{(costMatrix.cost_lines || []).sort((a, b) => a.sort_order - b.sort_order).map((c, i) => (
+                    <tr key={i} style={{ background: c.source === "voyage" ? "#F0FFF4" : "transparent" }}>
+                      <td style={{ ...S.td, fontWeight: 700, color: c.block === "A" ? "#1B7A43" : c.block === "B" ? "#D4A017" : "#6B2D5B" }}>{c.block}</td>
+                      <td style={{ ...S.td, fontWeight: c.block === "A" ? 700 : 400 }}>{c.line_item}</td>
+                      <td style={S.td}><span style={S.badge(c.cost_type === "base" ? "#1B7A43" : c.cost_type === "incoterm_gap" ? "#D4A017" : "#6B2D5B")}>{c.cost_type.replace("_", " ")}</span></td>
+                      <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>${(c.amount || 0).toLocaleString()}</td>
+                      <td style={S.td}>{c.responsibility}</td>
+                      <td style={S.td}>{c.source === "voyage" ? <span style={S.badge("#1B7A43")}>{"\u{1F6A2}"}</span> : ""}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </>
+            )}
+          </div>
         </div>
       )}
 
