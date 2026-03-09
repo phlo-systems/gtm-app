@@ -14,27 +14,73 @@ import { NextResponse } from 'next/server'
 
 // ─── BUILT-IN PORT DATABASE ─────────────────────────────────────
 const PORTS = {
-  // Asia
+  // Asia - China
   CNSHA: { name: "Shanghai", country: "China", lat: 31.23, lng: 121.47, region: "asia" },
   CNNGB: { name: "Ningbo", country: "China", lat: 29.87, lng: 121.55, region: "asia" },
   CNSHE: { name: "Shenzhen", country: "China", lat: 22.54, lng: 114.06, region: "asia" },
+  CNQIN: { name: "Qingdao", country: "China", lat: 36.07, lng: 120.38, region: "asia" },
+  CNTXG: { name: "Tianjin", country: "China", lat: 38.99, lng: 117.78, region: "asia" },
+  CNXMN: { name: "Xiamen", country: "China", lat: 24.48, lng: 118.09, region: "asia" },
   HKHKG: { name: "Hong Kong", country: "Hong Kong", lat: 22.30, lng: 114.17, region: "asia" },
-  SGSIN: { name: "Singapore", country: "Singapore", lat: 1.26, lng: 103.84, region: "asia" },
+  // Asia - India
   INMUN: { name: "Mumbai (JNPT)", country: "India", lat: 18.95, lng: 72.95, region: "asia" },
+  INMUA: { name: "Mundra", country: "India", lat: 22.84, lng: 69.72, region: "asia" },
   INCHE: { name: "Chennai", country: "India", lat: 13.08, lng: 80.29, region: "asia" },
   INKOL: { name: "Kolkata", country: "India", lat: 22.55, lng: 88.33, region: "asia" },
+  INNSA: { name: "Nhava Sheva", country: "India", lat: 18.95, lng: 72.95, region: "asia" },
+  INTUT: { name: "Tuticorin", country: "India", lat: 8.76, lng: 78.13, region: "asia" },
+  INKOK: { name: "Kochi (Cochin)", country: "India", lat: 9.97, lng: 76.27, region: "asia" },
+  INPAV: { name: "Pipavav", country: "India", lat: 20.95, lng: 71.53, region: "asia" },
+  INKRI: { name: "Krishnapatnam", country: "India", lat: 14.26, lng: 80.13, region: "asia" },
+  INVIS: { name: "Visakhapatnam", country: "India", lat: 17.69, lng: 83.29, region: "asia" },
+  INGOI: { name: "Goa (Mormugao)", country: "India", lat: 15.41, lng: 73.80, region: "asia" },
+  INDEL: { name: "Delhi (ICD Tughlakabad)", country: "India", lat: 28.50, lng: 77.27, region: "asia" },
+  // Asia - Southeast
+  SGSIN: { name: "Singapore", country: "Singapore", lat: 1.26, lng: 103.84, region: "asia" },
+  MYTPP: { name: "Port Klang", country: "Malaysia", lat: 3.00, lng: 101.39, region: "asia" },
+  MYPKG: { name: "Penang", country: "Malaysia", lat: 5.42, lng: 100.35, region: "asia" },
+  THBKK: { name: "Bangkok (Laem Chabang)", country: "Thailand", lat: 13.08, lng: 100.88, region: "asia" },
+  VNHPH: { name: "Hai Phong", country: "Vietnam", lat: 20.86, lng: 106.68, region: "asia" },
+  VNSGN: { name: "Ho Chi Minh City", country: "Vietnam", lat: 10.77, lng: 106.70, region: "asia" },
+  IDJKT: { name: "Jakarta (Tanjung Priok)", country: "Indonesia", lat: -6.10, lng: 106.88, region: "asia" },
+  PHMNL: { name: "Manila", country: "Philippines", lat: 14.59, lng: 120.97, region: "asia" },
+  LKCMB: { name: "Colombo", country: "Sri Lanka", lat: 6.94, lng: 79.85, region: "asia" },
+  BDDAC: { name: "Chittagong", country: "Bangladesh", lat: 22.33, lng: 91.80, region: "asia" },
+  MMRGN: { name: "Yangon", country: "Myanmar", lat: 16.87, lng: 96.17, region: "asia" },
+  // Asia - East
+  JPYOK: { name: "Yokohama", country: "Japan", lat: 35.44, lng: 139.64, region: "asia" },
+  JPTYO: { name: "Tokyo", country: "Japan", lat: 35.65, lng: 139.77, region: "asia" },
+  JPKOB: { name: "Kobe", country: "Japan", lat: 34.68, lng: 135.20, region: "asia" },
+  KRPUS: { name: "Busan", country: "South Korea", lat: 35.10, lng: 129.04, region: "asia" },
+  TWKHH: { name: "Kaohsiung", country: "Taiwan", lat: 22.61, lng: 120.27, region: "asia" },
+  // Middle East
   AEAUH: { name: "Abu Dhabi", country: "UAE", lat: 24.45, lng: 54.65, region: "middle_east" },
   AEJEA: { name: "Jebel Ali", country: "UAE", lat: 25.01, lng: 55.06, region: "middle_east" },
-  JPYOK: { name: "Yokohama", country: "Japan", lat: 35.44, lng: 139.64, region: "asia" },
-  KRPUS: { name: "Busan", country: "South Korea", lat: 35.10, lng: 129.04, region: "asia" },
+  AEDXB: { name: "Dubai", country: "UAE", lat: 25.27, lng: 55.30, region: "middle_east" },
+  OMSLL: { name: "Salalah", country: "Oman", lat: 16.94, lng: 54.00, region: "middle_east" },
+  SAJED: { name: "Jeddah", country: "Saudi Arabia", lat: 21.49, lng: 39.17, region: "middle_east" },
+  SADMM: { name: "Dammam", country: "Saudi Arabia", lat: 26.43, lng: 50.10, region: "middle_east" },
+  BHKBS: { name: "Khalifa Bin Salman", country: "Bahrain", lat: 26.01, lng: 50.56, region: "middle_east" },
+  IQBSR: { name: "Basra (Umm Qasr)", country: "Iraq", lat: 30.04, lng: 47.93, region: "middle_east" },
   // Europe
   GBFXT: { name: "Felixstowe", country: "UK", lat: 51.96, lng: 1.35, region: "europe" },
   GBSOU: { name: "Southampton", country: "UK", lat: 50.89, lng: -1.40, region: "europe" },
+  GBLGP: { name: "London Gateway", country: "UK", lat: 51.50, lng: 0.47, region: "europe" },
+  GBLIV: { name: "Liverpool", country: "UK", lat: 53.45, lng: -3.02, region: "europe" },
   NLRTM: { name: "Rotterdam", country: "Netherlands", lat: 51.90, lng: 4.50, region: "europe" },
   DEHAM: { name: "Hamburg", country: "Germany", lat: 53.55, lng: 9.97, region: "europe" },
+  DEBHV: { name: "Bremerhaven", country: "Germany", lat: 53.54, lng: 8.58, region: "europe" },
   BEANR: { name: "Antwerp", country: "Belgium", lat: 51.26, lng: 4.40, region: "europe" },
+  FRLEH: { name: "Le Havre", country: "France", lat: 49.49, lng: 0.11, region: "europe" },
   ITGOA: { name: "Genoa", country: "Italy", lat: 44.41, lng: 8.93, region: "europe" },
   ESALG: { name: "Algeciras", country: "Spain", lat: 36.13, lng: -5.45, region: "europe" },
+  ESBCN: { name: "Barcelona", country: "Spain", lat: 41.35, lng: 2.17, region: "europe" },
+  ESVAL: { name: "Valencia", country: "Spain", lat: 39.45, lng: -0.32, region: "europe" },
+  GRPIR: { name: "Piraeus", country: "Greece", lat: 37.94, lng: 23.64, region: "europe" },
+  TRIST: { name: "Istanbul (Ambarli)", country: "Turkey", lat: 40.97, lng: 28.72, region: "europe" },
+  TRMER: { name: "Mersin", country: "Turkey", lat: 36.80, lng: 34.63, region: "europe" },
+  PLGDY: { name: "Gdynia", country: "Poland", lat: 54.53, lng: 18.55, region: "europe" },
+  RULED: { name: "St Petersburg", country: "Russia", lat: 59.93, lng: 30.14, region: "europe" },
   // Africa
   ZADUR: { name: "Durban", country: "South Africa", lat: -29.87, lng: 31.05, region: "africa" },
   ZALOB: { name: "Cape Town", country: "South Africa", lat: -33.90, lng: 18.43, region: "africa" },
@@ -42,14 +88,29 @@ const PORTS = {
   EGPSD: { name: "Port Said", country: "Egypt", lat: 31.26, lng: 32.30, region: "africa" },
   KEMLB: { name: "Mombasa", country: "Kenya", lat: -4.04, lng: 39.67, region: "africa" },
   NGAPP: { name: "Apapa (Lagos)", country: "Nigeria", lat: 6.44, lng: 3.36, region: "africa" },
+  TZDAR: { name: "Dar es Salaam", country: "Tanzania", lat: -6.82, lng: 39.29, region: "africa" },
+  DJJIB: { name: "Djibouti", country: "Djibouti", lat: 11.59, lng: 43.15, region: "africa" },
+  GHTEM: { name: "Tema", country: "Ghana", lat: 5.63, lng: -0.02, region: "africa" },
+  SDPZU: { name: "Port Sudan", country: "Sudan", lat: 19.62, lng: 37.23, region: "africa" },
+  MZMPK: { name: "Maputo", country: "Mozambique", lat: -25.97, lng: 32.58, region: "africa" },
   // Americas
   USNYC: { name: "New York/Newark", country: "USA", lat: 40.68, lng: -74.04, region: "americas" },
   USLAX: { name: "Los Angeles", country: "USA", lat: 33.74, lng: -118.26, region: "americas" },
   USHOU: { name: "Houston", country: "USA", lat: 29.73, lng: -95.26, region: "americas" },
+  USSAV: { name: "Savannah", country: "USA", lat: 32.08, lng: -81.09, region: "americas" },
+  USCHI: { name: "Chicago", country: "USA", lat: 41.73, lng: -87.58, region: "americas" },
+  CAHAL: { name: "Halifax", country: "Canada", lat: 44.65, lng: -63.57, region: "americas" },
+  CAVAN: { name: "Vancouver", country: "Canada", lat: 49.29, lng: -123.11, region: "americas" },
   BRSSZ: { name: "Santos", country: "Brazil", lat: -23.95, lng: -46.30, region: "americas" },
+  ARBUE: { name: "Buenos Aires", country: "Argentina", lat: -34.60, lng: -58.37, region: "americas" },
+  CLSAI: { name: "San Antonio", country: "Chile", lat: -33.59, lng: -71.61, region: "americas" },
+  PAMIT: { name: "Balboa (Panama)", country: "Panama", lat: 8.96, lng: -79.57, region: "americas" },
   // Oceania
   AUMEL: { name: "Melbourne", country: "Australia", lat: -37.82, lng: 144.95, region: "oceania" },
   AUSYD: { name: "Sydney", country: "Australia", lat: -33.85, lng: 151.18, region: "oceania" },
+  AUBNE: { name: "Brisbane", country: "Australia", lat: -27.38, lng: 153.17, region: "oceania" },
+  AUFRE: { name: "Fremantle (Perth)", country: "Australia", lat: -32.05, lng: 115.74, region: "oceania" },
+  NZAKL: { name: "Auckland", country: "New Zealand", lat: -36.84, lng: 174.77, region: "oceania" },
 };
 
 // ─── CARRIERS & BASE RATES ──────────────────────────────────────
@@ -95,14 +156,49 @@ const SURCHARGES = {
 
 function resolvePort(query) {
   const q = query.toUpperCase().trim();
-  // Direct code match
+  // Direct UN/LOCODE match
   if (PORTS[q]) return { code: q, ...PORTS[q] };
-  // Name match
+
+  // Strip "country" suffix from "City, Country" format
+  const parts = query.split(",").map(s => s.trim().toUpperCase());
+  const cityQuery = parts[0];
+  const countryQuery = parts[1] || "";
+
+  // Exact city name match (with optional country filter)
   for (const [code, port] of Object.entries(PORTS)) {
-    if (port.name.toUpperCase().includes(q) || port.country.toUpperCase().includes(q)) {
-      return { code, ...port };
+    const nameUp = port.name.toUpperCase();
+    const countryUp = port.country.toUpperCase();
+    // Match city name (including parenthetical aliases like "Mumbai (JNPT)")
+    const nameBase = nameUp.split("(")[0].trim();
+    const nameAlias = nameUp.includes("(") ? nameUp.split("(")[1].replace(")", "").trim() : "";
+    
+    if (nameBase === cityQuery || nameAlias === cityQuery || nameUp === cityQuery) {
+      if (!countryQuery || countryUp.includes(countryQuery)) {
+        return { code, ...port };
+      }
     }
   }
+
+  // Partial match — city name contains query or query contains city name
+  for (const [code, port] of Object.entries(PORTS)) {
+    const nameUp = port.name.toUpperCase();
+    const countryUp = port.country.toUpperCase();
+    if (nameUp.includes(cityQuery) || cityQuery.includes(nameUp.split("(")[0].trim())) {
+      if (!countryQuery || countryUp.includes(countryQuery)) {
+        return { code, ...port };
+      }
+    }
+  }
+
+  // Last resort — match on country name alone (return largest port)
+  if (countryQuery) {
+    for (const [code, port] of Object.entries(PORTS)) {
+      if (port.country.toUpperCase().includes(countryQuery)) {
+        return { code, ...port };
+      }
+    }
+  }
+
   return null;
 }
 

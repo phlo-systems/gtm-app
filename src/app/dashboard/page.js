@@ -42,6 +42,7 @@ import ForwarderJobScreen from "@/components/forwarder/ForwarderJobScreen";
 import MasterDataScreen from "@/components/common/MasterDataScreen";
 import TeamScreen from "@/components/common/TeamScreen";
 import ContainerCalculator from "@/components/common/ContainerCalculator";
+import CustomsScreen from "@/components/common/CustomsScreen";
 
 export default function GTMApp() {
   const [page, setPage] = useState("dashboard");
@@ -102,7 +103,7 @@ export default function GTMApp() {
         case "dashboard": return <DashboardView deals={deals} onNav={(p, d) => d ? openJob(d) : setPage(p)} role="forwarder" />;
         case "jobs":      return <ForwarderJobsList deals={deals} onOpenJob={openJob} onNewJob={newJob} />;
         case "newjob":    return <ForwarderJobScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
-        case "customs":   return <Placeholder title="Customs Clearance" />;
+        case "customs":   return <CustomsScreen deal={currentDeal} />;
         case "tracking":  return <Placeholder title="Shipment Tracking" />;
         case "calculator": return <ContainerCalculator />;
         case "masterdata": return <MasterDataScreen role="forwarder" />;
@@ -114,7 +115,7 @@ export default function GTMApp() {
         case "dashboard": return <DashboardView deals={deals} onNav={(p, d) => d ? openDeal(d) : setPage(p)} role="trader" />;
         case "deals":     return <DealsList deals={deals} onOpenDeal={openDeal} onNewDeal={newDeal} />;
         case "precalc":   return <PreCalcScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
-        case "customs":   return <Placeholder title="Customs Intelligence" />;
+        case "customs":   return <CustomsScreen deal={currentDeal} />;
         case "postcalc":  return <Placeholder title="Post-Trade Analytics" />;
         case "calculator": return <ContainerCalculator />;
         case "masterdata": return <MasterDataScreen role="trader" />;

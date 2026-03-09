@@ -25,6 +25,8 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
   const [costMatrix, setCostMatrix] = useState(null);
   const [step, setStep] = useState(1);
   const [appliedVoyage, setAppliedVoyage] = useState(null);
+  const [customsResult, setCustomsResult] = useState(null);
+  const [customsLoading, setCustomsLoading] = useState(false);
   const [form, setForm] = useState({
     trade_type: deal?.trade_type || "cross_border_direct",
     transport_mode: deal?.transport_mode || "ocean",
@@ -107,6 +109,46 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
       gross_margin_pct: costMatrix.selling_price > 0 ? ((costMatrix.selling_price - newTotal) / costMatrix.selling_price) * 100 : 0,
     });
     setAppliedVoyage(voyage);
+  };
+
+  // Fetch customs estimate
+  const fetchCustomsEstimate = async (importCountry) => {
+    if (!importCountry) return;
+    setCustomsLoading(true);
+    try {
+      const cargoValue = (parseFloat(form.unit_price) || 0) * (deal?.quantity || 1);
+      const res = await fetch("/api/customs-estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: deal?.product?.name || "",
+          hs_code: form.hs_code,
+          origin_country: "",
+          import_country: importCountry,
+          cargo_value: cargoValue || 10000,
+          sell_incoterm: form.sell_incoterm,
+        }),
+      });
+      const data = await res.json();
+      setCustomsResult(data);
+    } catch (err) { console.error(err); }
+    setCustomsLoading(false);
+  };
+
+  // Apply customs costs to cost matrix (Block D)
+  const handleCustomsApply = () => {
+    if (!costMatrix || !customsResult?.cost_lines) return;
+    const nonDLines = (costMatrix.cost_lines || []).filter(l => l.source !== "customs");
+    const newDLines = customsResult.cost_lines.map((c, i) => ({
+      ...c, sort_order: 300 + i, responsibility: "trader", is_active: true, currency: form.cost_currency,
+    }));
+    const allLines = [...nonDLines, ...newDLines];
+    const newTotal = allLines.reduce((s, l) => s + (l.amount || 0), 0);
+    setCostMatrix({
+      ...costMatrix,
+      cost_lines: allLines,
+      total_cost: newTotal,
+    });
   };
 
   const inputStyle = (editable) => ({ ...S.input, background: editable ? "#FFF" : "#F0EDE6" });
@@ -217,6 +259,57 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
                 </div>
                 <button style={{ ...S.btn(false), fontSize: 11, padding: "4px 12px" }} onClick={() => setAppliedVoyage(null)}>Clear</button>
               </div>
+            </div>
+          )}
+
+          {/* Customs Estimate Panel */}
+          {costMatrix && isDraft && (
+            <div style={{ ...S.card, border: "1px solid #D4A017", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#D4A017" }}>{"\u{1F3DB}"} Customs Duty Estimate</div>
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Fetch import duties, VAT, and fees for the destination country</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 12, alignItems: "end" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={S.label}>Import Country</label>
+                  <select style={S.select} onChange={e => fetchCustomsEstimate(e.target.value)} disabled={customsLoading}>
+                    <option value="">Select country...</option>
+                    <option value="GB">United Kingdom</option><option value="US">United States</option>
+                    <option value="EU">European Union</option><option value="IN">India</option>
+                    <option value="ZA">South Africa</option><option value="AE">UAE</option>
+                    <option value="CN">China</option><option value="SG">Singapore</option>
+                    <option value="AU">Australia</option><option value="NG">Nigeria</option>
+                    <option value="KE">Kenya</option><option value="BR">Brazil</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={S.label}>HS Code</label>
+                  <input style={{ ...S.input, background: "#F0EDE6", fontFamily: "monospace" }} readOnly value={form.hs_code || "Not set"} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={S.label}>Cargo Value (est.)</label>
+                  <input style={{ ...S.input, background: "#F0EDE6", fontFamily: "monospace" }} readOnly value={"$" + ((parseFloat(form.unit_price) || 0) * (deal?.quantity || 1)).toLocaleString()} />
+                </div>
+              </div>
+              {customsResult?.duties && (
+                <div style={{ marginTop: 12, padding: 12, background: "#FAFAF8", borderRadius: 6, border: "1px solid #E8E4DC" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11 }}><span style={{ color: "#888" }}>Duty:</span> <strong>${customsResult.duties.customs_duty.amount.toLocaleString()}</strong> ({customsResult.duties.customs_duty.rate}%)</div>
+                    <div style={{ fontSize: 11 }}><span style={{ color: "#888" }}>{customsResult.duties.vat.name}:</span> <strong>${customsResult.duties.vat.amount.toLocaleString()}</strong> ({customsResult.duties.vat.rate}%)</div>
+                    <div style={{ fontSize: 11 }}><span style={{ color: "#888" }}>Brokerage:</span> <strong>${customsResult.duties.brokerage.amount.toLocaleString()}</strong></div>
+                    <div style={{ fontSize: 11 }}><span style={{ color: "#888" }}>Total:</span> <strong style={{ color: "#C62828" }}>${customsResult.duties.total_duties_taxes.toLocaleString()}</strong> ({customsResult.duties.effective_rate.toFixed(1)}%)</div>
+                  </div>
+                  {customsResult.duties.restrictions?.length > 0 && (
+                    <div style={{ fontSize: 11, color: "#D4A017", marginBottom: 8 }}>{"\u26A0"} {customsResult.duties.restrictions[0]}</div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 11, color: "#888" }}>{customsResult.incoterm_note}</div>
+                    <button style={S.btn(true)} onClick={handleCustomsApply}>Apply to Block D</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
