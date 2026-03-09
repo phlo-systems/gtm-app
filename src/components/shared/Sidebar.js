@@ -39,6 +39,9 @@ const TRADER_NAV = [
   { key: "precalc", icon: "\u25A3", label: "Pre-Calc" },
   { key: "customs", icon: "\u25C6", label: "Customs" },
   { key: "postcalc", icon: "\u25C9", label: "Post-Calc" },
+  { key: "calculator", icon: "\u25A8", label: "Container Calc" },
+  { key: "masterdata", icon: "\u25C7", label: "Master Data" },
+  { key: "team", icon: "\u25CB", label: "Team" },
 ];
 
 const FORWARDER_NAV = [
@@ -47,6 +50,9 @@ const FORWARDER_NAV = [
   { key: "newjob", icon: "\u25A3", label: "New Job" },
   { key: "customs", icon: "\u25C6", label: "Customs" },
   { key: "tracking", icon: "\u25CE", label: "Tracking" },
+  { key: "calculator", icon: "\u25A8", label: "Container Calc" },
+  { key: "masterdata", icon: "\u25C7", label: "Master Data" },
+  { key: "team", icon: "\u25CB", label: "Team" },
 ];
 
 export default function Sidebar({ active, onNav, user, onLogout, role, onRoleChange }) {
