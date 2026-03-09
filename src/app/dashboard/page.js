@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { calculateIncotermGap, INCOTERMS_2020 } from "@/lib/incoterms";
 import { WORLD_PORTS, getEstimatedVoyages } from "@/lib/ports";
 import GuidedTour from "@/components/GuidedTour";
+import ContainerCalculator from "@/components/ContainerCalculator";
 
 const S = {
   page: { fontFamily: "'Segoe UI', -apple-system, sans-serif", background: "#F8F7F4", minHeight: "100vh", color: "#1A1A1A" },
@@ -287,16 +288,28 @@ function TradeRouteMap({ buyLocation, sellLocation, buyIncoterm, sellIncoterm, t
 
 
 /* ── Sidebar ── */
-function Sidebar({ active, onNav, user, onLogout }) {
-  const items = [
+function Sidebar({ active, onNav, user, onLogout, role, onRoleToggle }) {
+  const traderItems = [
     { key: "dashboard", icon: "\u25FB", label: "Dashboard" },
     { key: "deals", icon: "\u25C8", label: "Deals" },
     { key: "precalc", icon: "\u25A3", label: "Pre-Calc" },
+    { key: "container", icon: "\u25A8", label: "Container Calc" },
     { key: "customs", icon: "\u25C6", label: "Customs" },
     { key: "postcalc", icon: "\u25C9", label: "Post-Calc" },
     { key: "master", icon: "\u25A0", label: "Master Data" },
     { key: "settings", icon: "\u2699", label: "Settings" },
   ];
+  const forwarderItems = [
+    { key: "dashboard", icon: "\u25FB", label: "Dashboard" },
+    { key: "deals", icon: "\u25C8", label: "Jobs" },
+    { key: "precalc", icon: "\u25A3", label: "Quotation" },
+    { key: "container", icon: "\u25A8", label: "Container Calc" },
+    { key: "customs", icon: "\u25C6", label: "Customs" },
+    { key: "postcalc", icon: "\u25C9", label: "Post-Job P&L" },
+    { key: "master", icon: "\u25A0", label: "Master Data" },
+    { key: "settings", icon: "\u2699", label: "Settings" },
+  ];
+  const items = role === "forwarder" ? forwarderItems : traderItems;
   return (
     <div style={S.sidebar} data-tour="sidebar">
       <div style={{ padding: "20px 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
@@ -314,9 +327,14 @@ function Sidebar({ active, onNav, user, onLogout }) {
           </div>
         ))}
       </div>
-      <div style={{ padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: 11, opacity: 0.6 }}>
-        <div>{user?.email}</div>
-        <div onClick={onLogout} style={{ marginTop: 8, cursor: "pointer", color: "#FF9999", fontWeight: 600 }}>Sign Out</div>
+      <div style={{ padding: "12px 16px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+        <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", marginBottom: 10 }}>
+          {[{ k: "trader", l: "Trader" }, { k: "forwarder", l: "Forwarder" }].map(r => (
+            <div key={r.k} onClick={() => onRoleToggle(r.k)} style={{ flex: 1, padding: "6px 0", textAlign: "center", fontSize: 10, fontWeight: 700, cursor: "pointer", background: role === r.k ? "#A5D6A7" : "rgba(255,255,255,0.08)", color: role === r.k ? "#1B4332" : "rgba(255,255,255,0.4)", transition: "all 0.2s" }}>{r.l}</div>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.5 }}>{user?.email}</div>
+        <div onClick={onLogout} style={{ marginTop: 6, cursor: "pointer", color: "#FF9999", fontWeight: 600, fontSize: 11 }}>Sign Out</div>
       </div>
     </div>
   );
@@ -1597,6 +1615,7 @@ export default function GTMApp() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showTour, setShowTour] = useState(false);
+  const [role, setRole] = useState("trader");
   const supabase = createClient();
   const router = useRouter();
 
@@ -1609,6 +1628,7 @@ export default function GTMApp() {
       setLoading(false);
       // Show tour for first-time users
       if (!localStorage.getItem("gtm_tour_done")) setShowTour(true);
+      setRole(localStorage.getItem("gtm_role") || "trader");
     }
     init();
   }, []);
@@ -1625,6 +1645,7 @@ export default function GTMApp() {
   const newDeal = () => { setCurrentDeal(null); setPage("precalc"); };
   const handleSaved = (saved) => { setCurrentDeal(saved); loadDeals(); };
   const goBack = () => { setCurrentDeal(null); setPage("deals"); loadDeals(); };
+  const toggleRole = (r) => { setRole(r); localStorage.setItem("gtm_role", r); };
   const deleteDeal = async (deal) => {
     if (!confirm("Delete deal " + deal.deal_number + "? This cannot be undone.")) return;
     try {
@@ -1643,6 +1664,7 @@ export default function GTMApp() {
       case "precalc": return <PreCalcScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
       case "customs": return <div style={S.card}><div style={{ textAlign: "center", padding: 40, color: "#888" }}>Customs Intelligence - Coming Soon</div></div>;
       case "postcalc": return <PostCalcScreen deals={deals} />;
+      case "container": return <div><h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 20px 0" }}>Container Stuffing Calculator</h2><ContainerCalculator /></div>;
       case "master": return <MasterDataScreen />;
       case "settings": return <SettingsScreen />;
       default: return <DashboardView deals={deals} onNav={setPage} />;
@@ -1651,7 +1673,7 @@ export default function GTMApp() {
 
   return (
     <div style={S.page}>
-      <Sidebar active={page} onNav={setPage} user={user} onLogout={handleLogout} />
+      <Sidebar active={page} onNav={setPage} user={user} onLogout={handleLogout} role={role} onRoleToggle={toggleRole} />
       <div style={S.main}>{renderPage()}</div>
       {/* Help / Restart Tour button */}
       <button onClick={() => { localStorage.removeItem("gtm_tour_done"); setShowTour(true); }} style={{ position: "fixed", bottom: 20, right: 20, width: 44, height: 44, borderRadius: 22, background: "#1B4332", color: "#FFF", border: "none", fontSize: 18, cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.2)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }} title="Restart guided tour">?</button>
