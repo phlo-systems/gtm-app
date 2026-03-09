@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-helpers'
 
 export async function GET(request, { params }) {
-  const { supabase, tenantId } = await getCurrentUser()
+  const { supabase, tenantId, can } = await getCurrentUser()
   if (!tenantId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!can('read')) return NextResponse.json({ error: 'No permission' }, { status: 403 })
 
   const { data: deal, error } = await supabase
     .from('deals')
@@ -27,8 +28,9 @@ export async function GET(request, { params }) {
 }
 
 export async function PUT(request, { params }) {
-  const { supabase, tenantId } = await getCurrentUser()
+  const { supabase, tenantId, can } = await getCurrentUser()
   if (!tenantId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!can('write')) return NextResponse.json({ error: 'No permission to edit deals' }, { status: 403 })
 
   const body = await request.json()
 
@@ -109,8 +111,9 @@ export async function PUT(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
-  const { supabase, tenantId } = await getCurrentUser()
+  const { supabase, tenantId, can } = await getCurrentUser()
   if (!tenantId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!can('delete')) return NextResponse.json({ error: 'No permission to delete deals' }, { status: 403 })
 
   const { error } = await supabase
     .from('deals')

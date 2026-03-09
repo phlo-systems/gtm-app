@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-helpers'
 
 export async function GET() {
-  const { supabase, tenantId } = await getCurrentUser()
+  const { supabase, tenantId, can } = await getCurrentUser()
   if (!tenantId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!can('read')) return NextResponse.json({ error: 'No permission' }, { status: 403 })
 
   const { data: deals, error } = await supabase
     .from('deals')
@@ -21,8 +22,9 @@ export async function GET() {
 }
 
 export async function POST(request) {
-  const { supabase, tenantId, profile } = await getCurrentUser()
+  const { supabase, tenantId, profile, can } = await getCurrentUser()
   if (!tenantId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!can('write')) return NextResponse.json({ error: 'No permission to create deals' }, { status: 403 })
 
   const body = await request.json()
 

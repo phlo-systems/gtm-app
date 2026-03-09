@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-helpers'
 
 export async function POST(request, { params }) {
-  const { supabase, tenantId, profile } = await getCurrentUser()
+  const { supabase, tenantId, profile, can } = await getCurrentUser()
   if (!tenantId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { action, comment } = await request.json()
@@ -10,6 +10,14 @@ export async function POST(request, { params }) {
   const validActions = ['submit', 'approve', 'reject', 'return']
   if (!validActions.includes(action)) {
     return NextResponse.json({ error: `Invalid action. Must be one of: ${validActions.join(', ')}` }, { status: 400 })
+  }
+
+  // Permission check: submit needs write, approve/reject need approve permission
+  if (action === 'submit' && !can('write')) {
+    return NextResponse.json({ error: 'No permission to submit deals' }, { status: 403 })
+  }
+  if (['approve', 'reject', 'return'].includes(action) && !can('approve')) {
+    return NextResponse.json({ error: 'No permission to approve/reject deals' }, { status: 403 })
   }
 
   // Get current deal
