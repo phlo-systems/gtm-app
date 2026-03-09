@@ -46,7 +46,51 @@ export async function PUT(request, { params }) {
   }
 
   // Remove fields that shouldn't be updated directly
-  const { id, tenant_id, deal_number, created_at, created_by, ...updateData } = body
+  const { id, tenant_id, deal_number, created_at, created_by, _forwarder_data, customer_name, supplier_name, ...updateData } = body
+
+  // Handle inline counterparty creation on update too
+  if (customer_name && !updateData.customer_id) {
+    const { data: existing } = await supabase
+      .from('counterparties')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('name', customer_name)
+      .single()
+    if (existing) {
+      updateData.customer_id = existing.id
+    } else {
+      const { data: cust } = await supabase
+        .from('counterparties')
+        .insert({ tenant_id: tenantId, name: customer_name, type: 'customer' })
+        .select('id')
+        .single()
+      if (cust) updateData.customer_id = cust.id
+    }
+  }
+
+  if (supplier_name && !updateData.supplier_id) {
+    const { data: existing } = await supabase
+      .from('counterparties')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('name', supplier_name)
+      .single()
+    if (existing) {
+      updateData.supplier_id = existing.id
+    } else {
+      const { data: supp } = await supabase
+        .from('counterparties')
+        .insert({ tenant_id: tenantId, name: supplier_name, type: 'supplier' })
+        .select('id')
+        .single()
+      if (supp) updateData.supplier_id = supp.id
+    }
+  }
+
+  // Persist forwarder-specific data as JSONB if present
+  if (_forwarder_data) {
+    updateData.forwarder_metadata = _forwarder_data
+  }
 
   const { data: deal, error } = await supabase
     .from('deals')

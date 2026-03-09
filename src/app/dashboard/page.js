@@ -424,6 +424,9 @@ function ForwarderJobScreen({ deal, onBack, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(1);
 
+  // Read forwarder-specific metadata from persisted JSONB
+  const fm = deal?.forwarder_metadata || null;
+
   const [form, setForm] = useState({
     transport_mode: deal?.transport_mode || "ocean_fcl",
     trade_type: deal?.trade_type || "import",
@@ -431,36 +434,36 @@ function ForwarderJobScreen({ deal, onBack, onSaved }) {
     buy_location: deal?.buy_location || "",
     customer_name: deal?.customer?.name || "",
     sell_location: deal?.sell_location || "",
-    port_of_loading: deal?.port_of_loading || "",
-    port_of_discharge: deal?.port_of_discharge || "",
+    port_of_loading: fm?.port_of_loading || "",
+    port_of_discharge: fm?.port_of_discharge || "",
     incoterm: deal?.sell_incoterm || deal?.buy_incoterm || "FOB",
-    commodity_desc: deal?.commodity_desc || "",
+    commodity_desc: fm?.commodity_desc || "",
     hs_code: deal?.hs_code || "",
-    num_packages: deal?.num_packages || "",
-    package_type: deal?.package_type || "cartons",
-    gross_weight_kg: deal?.gross_weight_kg || "",
-    volume_cbm: deal?.volume_cbm || "",
-    container_type: deal?.container_type || "20GP",
-    num_containers: deal?.num_containers || 1,
-    is_hazardous: deal?.is_hazardous || false,
-    un_number: deal?.un_number || "",
-    is_temperature_controlled: deal?.is_temperature_controlled || false,
-    temp_range: deal?.temp_range || "",
-    cargo_value: deal?.cargo_value || "",
-    service_scope: deal?.service_scope || "port_to_port",
-    insurance_required: deal?.insurance_required || false,
-    customer_ref: deal?.customer_ref || "",
+    num_packages: fm?.num_packages || "",
+    package_type: fm?.package_type || "cartons",
+    gross_weight_kg: fm?.gross_weight_kg || "",
+    volume_cbm: fm?.volume_cbm || "",
+    container_type: fm?.container_type || "20GP",
+    num_containers: fm?.num_containers || 1,
+    is_hazardous: fm?.is_hazardous || false,
+    un_number: fm?.un_number || "",
+    is_temperature_controlled: fm?.is_temperature_controlled || false,
+    temp_range: fm?.temp_range || "",
+    cargo_value: fm?.cargo_value || "",
+    service_scope: fm?.service_scope || "port_to_port",
+    insurance_required: fm?.insurance_required || false,
+    customer_ref: fm?.customer_ref || "",
     cost_currency: deal?.cost_currency || "USD",
-    notify_party: deal?.notify_party || "",
-    required_etd: deal?.required_etd || "",
-    required_eta: deal?.required_eta || "",
+    notify_party: fm?.notify_party || "",
+    required_etd: fm?.required_etd || "",
+    required_eta: fm?.required_eta || "",
     customer_payment_terms: deal?.customer_payment_terms || "Net 30",
   });
 
   const f = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const fCheck = (key) => (e) => setForm({ ...form, [key]: e.target.checked });
 
-  const [costBuild, setCostBuild] = useState([
+  const defaultCostLines = [
     { id: 1, category: "Freight", description: "Ocean freight rate", buy_rate: "", sell_rate: "", unit: "per container", qty: form.num_containers || 1 },
     { id: 2, category: "Origin", description: "Origin THC", buy_rate: "", sell_rate: "", unit: "per container", qty: form.num_containers || 1 },
     { id: 3, category: "Origin", description: "Documentation / BL fee", buy_rate: "", sell_rate: "", unit: "per shipment", qty: 1 },
@@ -469,7 +472,10 @@ function ForwarderJobScreen({ deal, onBack, onSaved }) {
     { id: 6, category: "Destination", description: "Customs clearance (dest)", buy_rate: "", sell_rate: "", unit: "per shipment", qty: 1 },
     { id: 7, category: "Destination", description: "Delivery / haulage", buy_rate: "", sell_rate: "", unit: "per container", qty: form.num_containers || 1 },
     { id: 8, category: "Insurance", description: "Cargo insurance", buy_rate: "", sell_rate: "", unit: "lump sum", qty: 1 },
-  ]);
+  ];
+  const [costBuild, setCostBuild] = useState(
+    fm?.cost_build && fm.cost_build.length > 0 ? fm.cost_build : defaultCostLines
+  );
 
   const addCostLine = () => setCostBuild([...costBuild, { id: Date.now(), category: "Other", description: "", buy_rate: "", sell_rate: "", unit: "per shipment", qty: 1 }]);
   const updateCostLine = (id, field, value) => setCostBuild(costBuild.map(c => c.id === id ? { ...c, [field]: value } : c));
