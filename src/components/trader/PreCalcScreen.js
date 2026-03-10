@@ -17,6 +17,8 @@ import { useState, useEffect } from 'react';
 import { S, statusColor } from '@/components/shared/styles';
 import { calculateIncotermGap, INCOTERMS_2020 } from '@/lib/incoterms';
 import VoyageSearch from './VoyageSearch';
+import FuturesPricingWidget from '@/components/trader/FuturesPricingWidget';
+import DealExtendedFields from '@/components/trader/DealExtendedFields';
 
 export default function PreCalcScreen({ deal, onBack, onSaved }) {
   const isNew = !deal;
