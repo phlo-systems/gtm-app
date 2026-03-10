@@ -1,53 +1,40 @@
 /**
  * POST /api/customs/intelligence
  * ================================
- * AI-powered customs duty lookup for any country and product.
- * Uses Claude (Anthropic API) to provide:
- *   - Import duty rates (MFN + preferential agreements)
- *   - VAT / GST rates
- *   - Excise duties, environmental levies
- *   - Import restrictions, permits, licenses
- *   - Landed cost calculation
- *   - HS code suggestion
+ * AI-powered customs intelligence for any country and product.
  *
- * Request Body:
- *   {
- *     product: "frozen chicken breast",
- *     hsCode: "0207.14.11" (optional),
- *     importCountry: "South Africa",
- *     exportCountry: "Brazil" (optional),
- *     cifValue: 100000 (optional, in local currency),
- *     currency: "ZAR" (optional)
- *   }
+ * Actions:
+ *   suggest_hs_code    — Product description → HS code suggestions
+ *   describe_hs_code   — HS code → product description + classification
+ *   calculate_duties   — Full duty/tax/restriction analysis with landed cost
  *
- * Response:
- *   { result: { hsCode, duties, taxes, restrictions, landedCost, ... }, raw: "..." }
+ * Body: { action, product, hsCode, importCountry, exportCountry, cifValue, currency }
  */
 
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { product, hsCode, importCountry, exportCountry, cifValue, currency } = body;
-
-    if (!product || !importCountry) {
-      return Response.json(
-        { error: 'Missing required fields: product and importCountry' },
-        { status: 400 }
-      );
-    }
+    const { action = 'calculate_duties' } = body;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      return Response.json(
-        { error: 'ANTHROPIC_API_KEY not configured. Add it to Vercel environment variables.' },
-        { status: 500 }
-      );
+      return Response.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 });
     }
 
-    // Build the prompt
-    const prompt = buildPrompt({ product, hsCode, importCountry, exportCountry, cifValue, currency });
+    let prompt;
+    switch (action) {
+      case 'suggest_hs_code':
+        prompt = buildHsCodePrompt(body);
+        break;
+      case 'describe_hs_code':
+        prompt = buildDescribePrompt(body);
+        break;
+      case 'calculate_duties':
+      default:
+        prompt = buildDutiesPrompt(body);
+        break;
+    }
 
-    // Call Claude API
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -58,112 +45,140 @@ export async function POST(request) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
+        messages: [{ role: 'user', content: prompt }],
       }),
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error('[customs/intelligence] Anthropic API error:', response.status, errText);
-      return Response.json(
-        { error: `AI service error: ${response.status}` },
-        { status: 502 }
-      );
+      return Response.json({ error: `AI service error: ${response.status}` }, { status: 502 });
     }
 
     const aiResponse = await response.json();
     const rawText = aiResponse.content?.[0]?.text || '';
 
-    // Parse the structured JSON from Claude's response
     let result;
     try {
-      // Extract JSON from the response (Claude wraps it in ```json blocks sometimes)
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    } catch (parseError) {
-      // If JSON parsing fails, return the raw text
+    } catch (e) {
       result = null;
     }
 
     return Response.json({
       result: result || { rawResponse: rawText },
-      query: { product, hsCode, importCountry, exportCountry, cifValue, currency },
-      source: 'AI-generated estimate — verify with official customs authority before use',
+      action,
+      disclaimer: 'AI-generated estimate. Verify with official customs authority before making commercial decisions.',
     });
   } catch (error) {
-    console.error('[customs/intelligence] Error:', error);
+    console.error('[customs/intelligence]', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 }
 
-function buildPrompt({ product, hsCode, importCountry, exportCountry, cifValue, currency }) {
-  const cifLine = cifValue
-    ? `The CIF value is ${cifValue} ${currency || 'USD'}. Calculate the total landed cost including all duties, taxes and fees.`
-    : '';
+function buildHsCodePrompt({ product }) {
+  return `You are an international trade classification expert. Given a product description, suggest the most likely HS (Harmonized System) codes.
 
-  const originLine = exportCountry
-    ? `The goods are being exported from ${exportCountry} to ${importCountry}.`
-    : `The goods are being imported into ${importCountry}.`;
+Product: "${product}"
 
-  const hsLine = hsCode
-    ? `The HS code is ${hsCode}.`
-    : 'Suggest the most likely HS code (6-digit level minimum).';
+Respond ONLY with a JSON object (no markdown, no backticks):
+{
+  "suggestions": [
+    {
+      "hsCode": "XXXX.XX",
+      "description": "official HS heading/subheading description",
+      "confidence": "high/medium/low",
+      "notes": "why this classification applies"
+    }
+  ],
+  "product": "${product}",
+  "classificationNotes": "any general notes about classifying this product"
+}
 
-  return `You are a customs and trade compliance expert. Provide import duty and tax information for the following:
+Provide 2-4 suggestions ranked by likelihood. Use 6-digit HS codes minimum (8-10 digits if you know the specific country tariff subheading).`;
+}
+
+function buildDescribePrompt({ hsCode }) {
+  return `You are an international trade classification expert. Given an HS code, provide the official description and classification details.
+
+HS Code: "${hsCode}"
+
+Respond ONLY with a JSON object (no markdown, no backticks):
+{
+  "hsCode": "${hsCode}",
+  "description": "official HS description at this level",
+  "chapter": 0,
+  "chapterTitle": "chapter title",
+  "section": "section number and title",
+  "hierarchy": [
+    { "level": "Chapter", "code": "XX", "description": "..." },
+    { "level": "Heading", "code": "XXXX", "description": "..." },
+    { "level": "Subheading", "code": "XXXX.XX", "description": "..." }
+  ],
+  "commonProducts": ["list of common products classified under this code"],
+  "notes": "any relevant classification notes or exclusions"
+}`;
+}
+
+function buildDutiesPrompt({ product, hsCode, importCountry, exportCountry, cifValue, currency }) {
+  const hsLine = hsCode ? `HS Code: ${hsCode}` : 'HS Code: suggest the most appropriate one';
+  const cifLine = cifValue ? `CIF Value: ${cifValue} ${currency || 'USD'}. Calculate landed cost.` : '';
+  const originLine = exportCountry ? `Exporting from: ${exportCountry}` : '';
+
+  return `You are a customs and trade compliance expert with detailed knowledge of import tariffs worldwide. Provide accurate, current import duty and tax information:
 
 Product: ${product}
 ${hsLine}
+Importing into: ${importCountry}
 ${originLine}
 ${cifLine}
 
-Respond ONLY with a JSON object (no markdown, no backticks, no explanation outside the JSON) with this exact structure:
-
+Respond ONLY with a JSON object (no markdown, no backticks):
 {
-  "hsCode": "the HS code (6-8 digits with dots)",
-  "hsDescription": "official HS description for this code",
+  "hsCode": "the HS code (with dots)",
+  "hsDescription": "official HS description",
   "product": "${product}",
   "importCountry": "${importCountry}",
   "exportCountry": "${exportCountry || 'Not specified'}",
   "duties": {
-    "mfnRate": "the MFN/General duty rate (e.g. '15%' or '240c/kg' or 'free')",
-    "mfnRatePct": number or null,
+    "mfnRate": "MFN duty rate as string (e.g. '15%', '240c/kg', 'free')",
+    "mfnRatePct": 15.0,
     "preferentialRates": [
-      { "agreement": "name of trade agreement", "rate": "rate", "ratePct": number or null }
+      { "agreement": "trade agreement name", "rate": "preferential rate", "ratePct": 0, "countries": "applicable countries" }
     ],
-    "applicableRate": "the rate that applies given origin/destination",
-    "applicableRatePct": number or null,
-    "dutyType": "ad_valorem or specific or compound or free"
+    "applicableRate": "rate that applies for this origin-destination pair",
+    "applicableRatePct": 0,
+    "dutyType": "ad_valorem / specific / compound / free"
   },
   "taxes": {
-    "vat": { "rate": "e.g. 15%", "ratePct": number, "appliedOn": "CIF + duty" },
-    "excise": { "applicable": true/false, "rate": "rate if applicable", "description": "details" },
-    "otherLevies": [ { "name": "levy name", "rate": "rate", "description": "details" } ]
+    "vat": { "name": "VAT/GST name used in this country", "rate": "15%", "ratePct": 15.0, "appliedOn": "CIF + duty" },
+    "excise": { "applicable": false, "rate": "", "description": "" },
+    "otherLevies": [
+      { "name": "levy name", "rate": "rate", "description": "what it covers" }
+    ]
   },
   "restrictions": {
-    "importPermitRequired": true/false,
-    "sanitaryRequirements": true/false,
-    "labelling": "any labelling requirements",
-    "quotas": "any quota restrictions",
-    "prohibitions": "any prohibitions",
-    "otherRequirements": ["list of other requirements"],
-    "regulatoryBody": "name of the relevant customs/regulatory authority"
+    "importPermitRequired": false,
+    "sanitaryPhytosanitary": false,
+    "labellingRequirements": "any specific requirements",
+    "quotas": "any quota info or 'none'",
+    "prohibitions": "any prohibitions or 'none'",
+    "standards": "applicable standards (e.g. SABS, CE, FDA)",
+    "otherRequirements": [],
+    "regulatoryBody": "customs authority name and website"
   },
   ${cifValue ? `"landedCost": {
     "cifValue": ${cifValue},
     "currency": "${currency || 'USD'}",
-    "dutyAmount": number,
-    "vatAmount": number,
-    "otherCharges": number,
-    "totalLandedCost": number,
+    "dutyAmount": 0,
+    "vatAmount": 0,
+    "otherCharges": 0,
+    "totalLandedCost": 0,
     "effectiveRate": "total charges as % of CIF"
-  },` : ''}
-  "notes": "any important caveats, recent changes, or additional context",
-  "lastKnownUpdate": "approximate date of the tariff data you're referencing",
-  "confidence": "high/medium/low — how confident you are in this data"
-}`;
+  },` : '"landedCost": null,'}
+  "tradeAgreements": "list any relevant FTAs between origin and destination",
+  "notes": "important caveats, recent tariff changes, anti-dumping duties if applicable",
+  "confidence": "high/medium/low"
+}
+
+Be specific and accurate. Include actual current duty rates, not generic placeholders. If you're uncertain about exact rates, say so in the confidence field and notes.`;
 }
