@@ -19,6 +19,8 @@
 'use client'
 
 import CustomsIntelligence from '@/components/common/CustomsIntelligence';
+import FuturesPricingWidget from '@/components/trader/FuturesPricingWidget';
+import DealExtendedFields from '@/components/trader/DealExtendedFields';
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { useRouter } from "next/navigation";
