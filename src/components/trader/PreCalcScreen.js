@@ -19,6 +19,7 @@ import { calculateIncotermGap, INCOTERMS_2020 } from '@/lib/incoterms';
 import VoyageSearch from './VoyageSearch';
 import FuturesPricingWidget from '@/components/trader/FuturesPricingWidget';
 import DealExtendedFields from '@/components/trader/DealExtendedFields';
+import DealLifecyclePanel from '@/components/trader/DealLifecyclePanel';
 
 export default function PreCalcScreen({ deal, onBack, onSaved }) {
   const isNew = !deal;
