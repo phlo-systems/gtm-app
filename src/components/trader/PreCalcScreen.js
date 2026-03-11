@@ -7,8 +7,8 @@
  *   Step 3 - Feasibility: margin analysis and go/no-go decision
  * 
  * Props:
- *   deal    - existing deal object (null for new deal)
- *   onBack  - callback to return to deals list
+ *   deal   - existing deal object (null for new deal)
+ *   onBack - callback to return to deals list
  *   onSaved - callback(savedDeal) after successful save
  */
 'use client'
@@ -40,6 +40,7 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
     sell_location: deal?.sell_location || "",
     unit_price: deal?.unit_price || "",
     hs_code: deal?.hs_code || "",
+    extended: deal?.extended || {},
     cost_currency: deal?.cost_currency || "USD",
     customer_payment_terms: deal?.customer_payment_terms || "Net 60",
   });
@@ -90,46 +91,29 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
     setSaving(false);
   };
 
-  // Handle voyage selection — replace Block B cost lines with voyage rates
   const handleVoyageApply = ({ costs, voyage }) => {
     if (!costMatrix) return;
-    // Remove existing Block B lines and replace with voyage costs
     const nonBLines = (costMatrix.cost_lines || []).filter(l => l.block !== "B");
     const newBLines = costs.map((c, i) => ({
-      ...c,
-      sort_order: 100 + i,
-      responsibility: "trader",
-      is_active: true,
-      currency: form.cost_currency,
+      ...c, sort_order: 100 + i, responsibility: "trader", is_active: true, currency: form.cost_currency,
     }));
     const allLines = [...nonBLines, ...newBLines];
     const newTotal = allLines.reduce((s, l) => s + (l.amount || 0), 0);
     setCostMatrix({
-      ...costMatrix,
-      cost_lines: allLines,
-      total_cost: newTotal,
+      ...costMatrix, cost_lines: allLines, total_cost: newTotal,
       gross_margin_pct: costMatrix.selling_price > 0 ? ((costMatrix.selling_price - newTotal) / costMatrix.selling_price) * 100 : 0,
     });
     setAppliedVoyage(voyage);
   };
 
-  // Fetch customs estimate
   const fetchCustomsEstimate = async (importCountry) => {
     if (!importCountry) return;
     setCustomsLoading(true);
     try {
       const cargoValue = (parseFloat(form.unit_price) || 0) * (deal?.quantity || 1);
       const res = await fetch("/api/customs-estimate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: deal?.product?.name || "",
-          hs_code: form.hs_code,
-          origin_country: "",
-          import_country: importCountry,
-          cargo_value: cargoValue || 10000,
-          sell_incoterm: form.sell_incoterm,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: deal?.product?.name || "", hs_code: form.hs_code, origin_country: "", import_country: importCountry, cargo_value: cargoValue || 10000, sell_incoterm: form.sell_incoterm }),
       });
       const data = await res.json();
       setCustomsResult(data);
@@ -137,7 +121,6 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
     setCustomsLoading(false);
   };
 
-  // Apply customs costs to cost matrix (Block D)
   const handleCustomsApply = () => {
     if (!costMatrix || !customsResult?.cost_lines) return;
     const nonDLines = (costMatrix.cost_lines || []).filter(l => l.source !== "customs");
@@ -146,11 +129,7 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
     }));
     const allLines = [...nonDLines, ...newDLines];
     const newTotal = allLines.reduce((s, l) => s + (l.amount || 0), 0);
-    setCostMatrix({
-      ...costMatrix,
-      cost_lines: allLines,
-      total_cost: newTotal,
-    });
+    setCostMatrix({ ...costMatrix, cost_lines: allLines, total_cost: newTotal });
   };
 
   const inputStyle = (editable) => ({ ...S.input, background: editable ? "#FFF" : "#F0EDE6" });
@@ -191,6 +170,7 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
 
       {/* Step 1: Deal Sheet */}
       {step === 1 && (
+        <div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
           <div style={S.card}>
             <div style={S.sectionTitle}>Trade Structure</div>
@@ -232,22 +212,35 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
             </div>
           )}
         </div>
+
+          {/* Futures Pricing Widget */}
+          <div style={{ background: "#F5F7F0", borderRadius: 12, padding: 20, border: "1px solid #D4DBC8", marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#1B4332", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.5px" }}>Pricing</div>
+            <FuturesPricingWidget
+              buyPrice={form.unit_price || ''}
+              sellPrice={form.sell_price || ''}
+              onBuyPriceChange={v => setForm(p => ({...p, unit_price: v}))}
+              onSellPriceChange={v => setForm(p => ({...p, sell_price: v}))}
+              disabled={!isDraft}
+              S={S}
+            />
+          </div>
+
+          {/* Extended Deal Fields (Parties, Shipping, Payment, Compliance, Documents, Execution) */}
+          <DealExtendedFields
+            ext={form.extended || {}}
+            onChange={(key, val) => setForm(p => ({...p, extended: {...(p.extended||{}), [key]: val}}))}
+            disabled={!isDraft}
+          />
+        </div>
       )}
 
       {/* Step 2: Cost Matrix */}
       {step === 2 && (
         <div>
-          {/* Voyage Search - shown when cost matrix exists */}
           {costMatrix && isDraft && (
-            <VoyageSearch
-              origin={form.buy_location}
-              destination={form.sell_location}
-              onApply={handleVoyageApply}
-              currency={form.cost_currency}
-            />
+            <VoyageSearch origin={form.buy_location} destination={form.sell_location} onApply={handleVoyageApply} currency={form.cost_currency} />
           )}
-
-          {/* Applied Voyage Banner */}
           {appliedVoyage && (
             <div style={{ ...S.card, background: "#F0FFF4", border: "1px solid #C6E6D0", marginBottom: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -263,8 +256,6 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
               </div>
             </div>
           )}
-
-          {/* Customs Estimate Panel */}
           {costMatrix && isDraft && (
             <div style={{ ...S.card, border: "1px solid #D4A017", marginBottom: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -314,7 +305,6 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
               )}
             </div>
           )}
-
           <div style={S.card}>
             {!costMatrix ? (
               <div style={{ textAlign: "center", padding: 40 }}>
