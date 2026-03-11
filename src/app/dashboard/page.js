@@ -21,35 +21,12 @@
 import CustomsIntelligence from '@/components/common/CustomsIntelligence';
 import FuturesPricingWidget from '@/components/trader/FuturesPricingWidget';
 import DealExtendedFields from '@/components/trader/DealExtendedFields';
+import M2MWidget from '@/components/trader/M2MWidget';
+import AgentDashboard from '@/components/agent/AgentDashboard';
+import FinancerDashboard from '@/components/financer/FinancerDashboard';
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { useRouter } from "next/navigation";
-import AgentDashboard from '@/components/agent/AgentDashboard';
-import FinancerDashboard from '@/components/financer/FinancerDashboard';
-```
-
-That's it for now — the components are deployed and the APIs are live. I'll wire the full role selector and navigation in the next step.
-
-**Here's what each persona gets:**
-
-| | Commission Agent | Trade Financer |
-|---|---|---|
-| **Dashboard** | Commission summary (earned/pending/invoiced/paid), deals overview with commission per deal | Portfolio overview, LC pipeline (draft→issued→docs→accepted→paid), interest income |
-| **Core Feature** | Commission Tracker — add commission to any deal with type (% CIF, % margin, flat/MT, flat total), track through pending→invoiced→paid | Facility Management — create LCs, pre/post-shipment finance, bill discounting, warehouse finance; advance through 10-stage LC lifecycle |
-| **Exposure View** | Receivables aging by principal | Exposure by counterparty + by facility type with bar charts |
-| **Deal Integration** | "Add Commission" button on every deal, modal with rate calculator | "New Facility" links to any deal, tracks applicant/beneficiary/tenor/rate |
-| **Status Flow** | pending → invoiced → paid | draft → applied → issued → advised → docs_presented → discrepancies → accepted → paid |
-| **API** | `GET/POST/PUT /api/commissions` | `GET/POST/PUT /api/finance/lc` |
-
-**How the 4 personas interact on the same deals:**
-```
-TRADER creates deal → sets pricing, costs, feasibility
-    ↓
-AGENT adds commission → tracks who introduced the deal, earns fee
-    ↓
-FINANCER issues LC → tracks facility lifecycle, exposure, interest
-    ↓
-FORWARDER handles logistics → manages job, containers, shipping docs
 
 // Shared
 import { S } from "@/components/shared/styles";
@@ -130,9 +107,12 @@ export default function GTMApp() {
     if (role === "forwarder") {
       switch (page) {
         case "dashboard": return <DashboardView deals={deals} onNav={(p, d) => d ? openJob(d) : setPage(p)} role="forwarder" />;
+      case "m2m": return <M2MWidget S={S} />;
         case "jobs":      return <ForwarderJobsList deals={deals} onOpenJob={openJob} onNewJob={newJob} />;
         case "newjob":    return <ForwarderJobScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
         case "customs": return <CustomsIntelligence S={S} />;
+      case "agent": return <AgentDashboard deals={deals} S={S} />;
+      case "financer": return <FinancerDashboard deals={deals} S={S} />;
         case "tracking":  return <Placeholder title="Shipment Tracking" />;
         case "calculator": return <ContainerCalculator />;
         case "masterdata": return <MasterDataScreen role="forwarder" />;
