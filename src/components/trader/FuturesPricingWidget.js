@@ -4,6 +4,7 @@ import {
   FUTURES_CONTRACTS,
   getAvailableContracts,
   calculateFlatPrice,
+  detectPriceUnit,
 } from '@/lib/futures-pricing';
 
 export default function FuturesPricingWidget({
@@ -14,16 +15,12 @@ export default function FuturesPricingWidget({
   const [mode, setMode] = useState('flat');
   const [contractCode, setContractCode] = useState('S');
   const [contractMonth, setContractMonth] = useState('');
-  const [futuresPrice, setFuturesPrice] = useState('');
+  const [futuresPrice, setFuturesPrice] = useState('');    // Always stored in BASE unit (e.g. $/bushel)
   const [buyBasis, setBuyBasis] = useState('');
   const [sellBasis, setSellBasis] = useState('');
-
-  // Price fetch state
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [marketData, setMarketData] = useState(null);
   const [priceError, setPriceError] = useState('');
-
-  // Roll state
   const [needsRoll, setNeedsRoll] = useState(false);
   const [rollToMonth, setRollToMonth] = useState('');
   const [rollSpread, setRollSpread] = useState('');
@@ -31,7 +28,7 @@ export default function FuturesPricingWidget({
   const contract = useMemo(() => FUTURES_CONTRACTS.find(c => c.code === contractCode), [contractCode]);
   const availableMonths = useMemo(() => getAvailableContracts(contractCode), [contractCode]);
 
-  // Calculate flat prices from basis
+  // Calculate flat prices from basis (futures is already in base unit)
   useEffect(() => {
     if (mode !== 'basis' || !futuresPrice || (!buyBasis && !sellBasis)) return;
     const fp = parseFloat(futuresPrice);
@@ -40,8 +37,9 @@ export default function FuturesPricingWidget({
     let effectiveFutures = fp;
     if (needsRoll && rollSpread) effectiveFutures = fp + parseFloat(rollSpread);
 
-    const buyCalc = calculateFlatPrice(effectiveFutures, parseFloat(buyBasis) || 0, contractCode);
-    const sellCalc = calculateFlatPrice(effectiveFutures, parseFloat(sellBasis) || 0, contractCode);
+    // quoteInBaseUnit = true because we store futures in base unit ($/bushel, not cents)
+    const buyCalc = calculateFlatPrice(effectiveFutures, parseFloat(buyBasis) || 0, contractCode, true);
+    const sellCalc = calculateFlatPrice(effectiveFutures, parseFloat(sellBasis) || 0, contractCode, true);
 
     if (buyCalc.pricePerMT && onBuyPriceChange) onBuyPriceChange(buyCalc.pricePerMT);
     if (sellCalc.pricePerMT && onSellPriceChange) onSellPriceChange(sellCalc.pricePerMT);
@@ -50,14 +48,16 @@ export default function FuturesPricingWidget({
       onPricingDataChange({
         mode: 'basis', contractCode, contractMonth, futuresPrice: fp,
         buyBasis: parseFloat(buyBasis) || 0, sellBasis: parseFloat(sellBasis) || 0,
-        uom: contract?.unit, conversionFactor: contract?.mtConversion,
+        baseUnit: contract?.baseUnit, quoteUnit: contract?.quoteUnit,
+        mtConversion: contract?.mtConversion, divisor: contract?.divisor,
         buyFlatPrice: buyCalc.pricePerMT, sellFlatPrice: sellCalc.pricePerMT,
+        buyFormula: buyCalc.formula, sellFormula: sellCalc.formula,
         needsRoll, rollToMonth, rollSpread: parseFloat(rollSpread) || 0, effectiveFutures,
       });
     }
   }, [mode, futuresPrice, buyBasis, sellBasis, contractCode, needsRoll, rollSpread]);
 
-  // Fetch prices from AI
+  // Fetch prices from AI — auto-detect cents vs dollars
   const fetchPrices = async () => {
     if (!contract) return;
     setFetchingPrices(true);
@@ -79,9 +79,14 @@ export default function FuturesPricingWidget({
       if (data.error) throw new Error(data.error);
       if (data.result?.prices) {
         setMarketData(data.result);
-        // Auto-fill the futures price with last settlement
-        const settle = data.result.prices.lastSettle || data.result.prices.lastClose || data.result.prices.lastTrade;
-        if (settle) setFuturesPrice(settle.toString());
+        // Auto-fill: get the best price and convert to base unit
+        const rawPrice = data.result.prices.lastSettle || data.result.prices.lastClose || data.result.prices.lastTrade;
+        if (rawPrice) {
+          // Auto-detect: is this in cents/bushel or $/bushel?
+          const detection = detectPriceUnit(rawPrice, contractCode);
+          const priceInBase = detection.isBaseUnit ? rawPrice : rawPrice / contract.divisor;
+          setFuturesPrice(priceInBase.toString());
+        }
       }
     } catch (e) { setPriceError(e.message); }
     setFetchingPrices(false);
@@ -97,9 +102,8 @@ export default function FuturesPricingWidget({
     label: { fontSize: 10, color: '#888', display: 'block', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.5 },
     input: { width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #DDD', fontSize: 13, boxSizing: 'border-box', outline: 'none', background: disabled ? '#F0EDE6' : '#FFF' },
     row: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 },
-    row3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 },
     select: { width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #DDD', fontSize: 13, boxSizing: 'border-box', background: disabled ? '#F0EDE6' : '#FFF' },
-    calcResult: { fontSize: 11, color: '#1B4332', background: '#E8F0E0', padding: '6px 10px', borderRadius: 6, marginTop: 6, fontFamily: 'monospace' },
+    calcResult: { fontSize: 11, color: '#1B4332', background: '#E8F0E0', padding: '6px 10px', borderRadius: 6, marginTop: 6, fontFamily: 'monospace', lineHeight: 1.5 },
     rollSection: { marginTop: 10, padding: '10px 12px', background: '#FFF8E1', borderRadius: 8, border: '1px solid #FFECB3' },
     checkbox: { marginRight: 6, accentColor: '#1B4332' },
     tag: { display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 700, background: '#D4EDDA', color: '#155724', marginLeft: 6 },
@@ -107,19 +111,18 @@ export default function FuturesPricingWidget({
       padding: '8px 14px', borderRadius: 6, border: 'none', background: '#2196F3', color: '#FFF',
       fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
     },
-    marketDataBox: {
-      marginTop: 10, padding: 12, background: '#FFF', borderRadius: 8, border: '1px solid #E0E0E0',
-    },
+    marketDataBox: { marginTop: 10, padding: 12, background: '#FFF', borderRadius: 8, border: '1px solid #E0E0E0' },
     priceRow: { display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 },
     priceLabel: { color: '#888' },
     priceVal: { fontWeight: 600, fontFamily: 'monospace', color: '#1B4332' },
-    spinner: { display: 'inline-block', width: 12, height: 12, border: '2px solid #FFF', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginRight: 6, verticalAlign: 'middle' },
     confidence: (c) => ({
       display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 700,
       background: c === 'high' ? '#D4EDDA' : c === 'medium' ? '#FFF3CD' : '#F8D7DA',
       color: c === 'high' ? '#155724' : c === 'medium' ? '#856404' : '#721C24',
     }),
+    conversionBox: { fontSize: 10, color: '#666', background: '#F5F3F0', padding: '6px 10px', borderRadius: 6, marginBottom: 10, lineHeight: 1.5 },
     error: { fontSize: 11, color: '#C62828', marginTop: 6 },
+    spinner: { display: 'inline-block', width: 12, height: 12, border: '2px solid #FFF', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginRight: 6, verticalAlign: 'middle' },
   };
 
   return (
@@ -151,7 +154,7 @@ export default function FuturesPricingWidget({
             <div>
               <label style={s.label}>Futures Contract</label>
               <select style={s.select} value={contractCode} disabled={disabled}
-                onChange={e => { setContractCode(e.target.value); setContractMonth(''); setMarketData(null); }}>
+                onChange={e => { setContractCode(e.target.value); setContractMonth(''); setMarketData(null); setFuturesPrice(''); }}>
                 {FUTURES_CONTRACTS.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
             </div>
@@ -165,16 +168,23 @@ export default function FuturesPricingWidget({
             </div>
           </div>
 
-          {/* Futures Price + Fetch Button */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 10, marginBottom: 10 }}>
-            <div>
-              <label style={s.label}>Futures Price ({contract?.unit || ''})</label>
-              <input style={s.input} type="number" step="0.01" value={futuresPrice} readOnly={disabled}
-                onChange={e => setFuturesPrice(e.target.value)} placeholder="Last settle/close" />
+          {/* Conversion Info Box */}
+          {contract && (
+            <div style={s.conversionBox}>
+              <strong>{contract.exchange}:</strong> Quoted in <strong>{contract.quoteUnit}</strong>
+              {contract.divisor > 1 && <> → divide by {contract.divisor} = <strong>{contract.baseUnit}</strong></>}
+              {contract.mtConversion !== 1 && <> → × {contract.mtConversion} = <strong>USD/MT</strong></>}
+              {contract.mtConversion === 1 && contract.baseUnit.includes('MT') && <> (already per MT)</>}
             </div>
+          )}
+
+          {/* Futures Price + Fetch Button */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, marginBottom: 10 }}>
             <div>
-              <label style={s.label}>Conversion to MT</label>
-              <input style={{ ...s.input, background: '#F0EDE6' }} readOnly value={contract?.mtConversion || ''} />
+              <label style={s.label}>Futures Price ({contract?.baseUnit || ''})</label>
+              <input style={s.input} type="number" step="0.0001" value={futuresPrice} readOnly={disabled}
+                onChange={e => setFuturesPrice(e.target.value)}
+                placeholder={`e.g. ${contract?.divisor === 100 ? '11.50' : '350.00'} (in ${contract?.baseUnit || ''})`} />
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button style={{ ...s.fetchBtn, opacity: fetchingPrices ? 0.7 : 1 }} disabled={fetchingPrices || disabled}
@@ -200,27 +210,27 @@ export default function FuturesPricingWidget({
                   ['Last Trade', marketData.prices?.lastTrade],
                   ['Best Bid', marketData.prices?.bestBid],
                   ['Best Ask', marketData.prices?.bestAsk],
-                  ['Prev Close', marketData.prices?.prevClose],
                   ['Open', marketData.prices?.open],
                   ['High', marketData.prices?.high],
                   ['Low', marketData.prices?.low],
-                ].filter(([, v]) => v).map(([label, val]) => (
-                  <div key={label} style={s.priceRow}>
-                    <span style={s.priceLabel}>{label}</span>
-                    <span style={s.priceVal}>{val}</span>
-                  </div>
-                ))}
+                ].filter(([, v]) => v).map(([label, val]) => {
+                  // Show both raw and converted values for cents-based contracts
+                  const detection = detectPriceUnit(val, contractCode);
+                  const displayVal = contract?.divisor > 1 && !detection.isBaseUnit
+                    ? `${val} (${(val / contract.divisor).toFixed(4)} ${contract.baseUnit})`
+                    : val;
+                  return (
+                    <div key={label} style={s.priceRow}>
+                      <span style={s.priceLabel}>{label}</span>
+                      <span style={s.priceVal}>{displayVal}</span>
+                    </div>
+                  );
+                })}
               </div>
-              {marketData.change !== undefined && (
-                <div style={{ marginTop: 6, fontSize: 11 }}>
-                  Change: <span style={{ fontWeight: 700, color: marketData.change >= 0 ? '#1B7A43' : '#C62828' }}>
-                    {marketData.change >= 0 ? '+' : ''}{marketData.change} ({marketData.changePct >= 0 ? '+' : ''}{marketData.changePct}%)
-                  </span>
-                </div>
-              )}
               {marketData.priceDate && (
-                <div style={{ fontSize: 10, color: '#AAA', marginTop: 4 }}>
-                  As of: {marketData.priceDate} | {marketData.unit} | {marketData.notes && <em>{marketData.notes}</em>}
+                <div style={{ fontSize: 10, color: '#AAA', marginTop: 6 }}>
+                  As of: {marketData.priceDate} | Raw: {marketData.unit || contract?.quoteUnit}
+                  {marketData.source && <> | Source: {marketData.source}</>}
                 </div>
               )}
             </div>
@@ -230,14 +240,14 @@ export default function FuturesPricingWidget({
           {/* Buy/Sell Basis */}
           <div style={s.row}>
             <div>
-              <label style={s.label}>Buy Basis ({contract?.unit || ''})</label>
-              <input style={s.input} type="number" step="0.01" value={buyBasis} readOnly={disabled}
-                onChange={e => setBuyBasis(e.target.value)} placeholder="e.g. 45" />
+              <label style={s.label}>Buy Basis ({contract?.baseUnit || ''})</label>
+              <input style={s.input} type="number" step="0.0001" value={buyBasis} readOnly={disabled}
+                onChange={e => setBuyBasis(e.target.value)} placeholder="e.g. 2.35" />
             </div>
             <div>
-              <label style={s.label}>Sell Basis ({contract?.unit || ''})</label>
-              <input style={s.input} type="number" step="0.01" value={sellBasis} readOnly={disabled}
-                onChange={e => setSellBasis(e.target.value)} placeholder="e.g. 55" />
+              <label style={s.label}>Sell Basis ({contract?.baseUnit || ''})</label>
+              <input style={s.input} type="number" step="0.0001" value={sellBasis} readOnly={disabled}
+                onChange={e => setSellBasis(e.target.value)} placeholder="e.g. 2.50" />
             </div>
           </div>
 
@@ -255,9 +265,11 @@ export default function FuturesPricingWidget({
             </div>
           )}
 
+          {/* Show formula */}
           {futuresPrice && buyBasis && (
             <div style={s.calcResult}>
-              Buy: ({needsRoll && rollSpread ? `${futuresPrice} + ${rollSpread} spread` : futuresPrice} + {buyBasis}) × {contract?.mtConversion} = <strong>{buyPrice} USD/MT</strong>
+              <div><strong>Buy:</strong> ({futuresPrice} + {buyBasis}) {contract?.baseUnit} × {contract?.mtConversion} = <strong>{buyPrice} USD/MT</strong></div>
+              {sellBasis && <div><strong>Sell:</strong> ({futuresPrice} + {sellBasis}) {contract?.baseUnit} × {contract?.mtConversion} = <strong>{sellPrice} USD/MT</strong></div>}
             </div>
           )}
 
@@ -280,11 +292,16 @@ export default function FuturesPricingWidget({
                     </select>
                   </div>
                   <div>
-                    <label style={s.label}>Roll Spread ({contract?.unit || ''})</label>
+                    <label style={s.label}>Roll Spread ({contract?.baseUnit || ''})</label>
                     <input style={s.input} type="number" step="0.0001" value={rollSpread} readOnly={disabled}
                       onChange={e => setRollSpread(e.target.value)} placeholder="e.g. -0.1525" />
                   </div>
                 </div>
+                {rollSpread && (
+                  <div style={s.calcResult}>
+                    Effective futures: {futuresPrice} + ({rollSpread}) = <strong>{(parseFloat(futuresPrice) + parseFloat(rollSpread)).toFixed(4)}</strong> {contract?.baseUnit}
+                  </div>
+                )}
               </div>
             )}
           </div>

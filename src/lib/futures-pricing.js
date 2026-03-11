@@ -1,169 +1,169 @@
 /**
- * Futures Pricing Engine
- * ======================
- * Handles basis pricing against commodity futures contracts.
- * Converts between bushels/short tons and metric tons.
- * Supports contract rolling with spread adjustments.
+ * Futures Pricing Engine — with proper UOM conversions
+ * =====================================================
+ * Each contract specifies:
+ *   - quoteUnit:     What the exchange quotes (e.g. "cents/bushel")
+ *   - divisor:       To convert quote to base currency (100 for cents→$, 1 for already $)
+ *   - baseUnit:      After dividing (e.g. "$/bushel") — this is what basis is entered in
+ *   - mtConversion:  Multiplier to get to $/MT (e.g. 36.7437 bushels per MT)
  *
- * Used by: Deal Sheet (Pre-Calc), Futures Pricing Widget
+ * Formula: pricePerMT = (futuresQuote / divisor + basis) × mtConversion
+ *
+ * Example (CBOT Soybeans):
+ *   Exchange: 1150 cents/bushel  →  1150/100 = $11.50/bushel
+ *   Basis: +$2.35/bushel
+ *   Per MT: ($11.50 + $2.35) × 36.7437 = $509.54/MT
  */
-
-// ── Futures Contract Definitions ──
-export const FUTURES_EXCHANGES = {
-  CBOT: { name: 'CME Group (CBOT)', currency: 'USD' },
-  ICE: { name: 'ICE Futures', currency: 'USD' },
-  LME: { name: 'London Metal Exchange', currency: 'USD' },
-  SAFEX: { name: 'JSE/SAFEX', currency: 'ZAR' },
-};
 
 export const FUTURES_CONTRACTS = [
-  // CBOT Grains & Oilseeds
-  { code: 'S',   name: 'CBOT Soybeans',          exchange: 'CBOT', unit: 'Bushel',     mtConversion: 36.7437, months: 'FHKNQUX' },
-  { code: 'SM',  name: 'CBOT Soybean Meal',      exchange: 'CBOT', unit: 'Short Ton',  mtConversion: 1.1023,  months: 'FHKNQUVZ' },
-  { code: 'BO',  name: 'CBOT Soybean Oil',        exchange: 'CBOT', unit: 'Pound',      mtConversion: 2204.62, months: 'FHKNQUVZ' },
-  { code: 'C',   name: 'CBOT Corn',              exchange: 'CBOT', unit: 'Bushel',     mtConversion: 39.3680, months: 'HKNUZ' },
-  { code: 'W',   name: 'CBOT Wheat (SRW)',       exchange: 'CBOT', unit: 'Bushel',     mtConversion: 36.7437, months: 'HKNUZ' },
-  { code: 'KW',  name: 'CBOT Wheat (HRW)',       exchange: 'CBOT', unit: 'Bushel',     mtConversion: 36.7437, months: 'HKNUZ' },
-  { code: 'O',   name: 'CBOT Oats',              exchange: 'CBOT', unit: 'Bushel',     mtConversion: 68.8945, months: 'HKNUZ' },
-  { code: 'RR',  name: 'CBOT Rough Rice',        exchange: 'CBOT', unit: 'CWT',        mtConversion: 22.0462, months: 'FHKNUX' },
-  
-  // ICE Softs
-  { code: 'KC',  name: 'ICE Coffee C (Arabica)',  exchange: 'ICE',  unit: 'Pound',      mtConversion: 2204.62, months: 'HKNUZ' },
-  { code: 'SB',  name: 'ICE Sugar #11',          exchange: 'ICE',  unit: 'Pound',      mtConversion: 2204.62, months: 'HKNV' },
-  { code: 'CC',  name: 'ICE Cocoa',              exchange: 'ICE',  unit: 'Metric Ton', mtConversion: 1,       months: 'HKNUZ' },
-  { code: 'CT',  name: 'ICE Cotton #2',          exchange: 'ICE',  unit: 'Pound',      mtConversion: 2204.62, months: 'HKNVZ' },
-  { code: 'OJ',  name: 'ICE Orange Juice',       exchange: 'ICE',  unit: 'Pound',      mtConversion: 2204.62, months: 'FHKNUX' },
-  
-  // ICE Energy
-  { code: 'CL',  name: 'NYMEX Crude Oil (WTI)',  exchange: 'ICE',  unit: 'Barrel',     mtConversion: 7.33,    months: 'FGHJKMNQUVXZ' },
-  
-  // Metals
-  { code: 'GC',  name: 'COMEX Gold',             exchange: 'CBOT', unit: 'Troy Oz',    mtConversion: 32150.7, months: 'GJMQVZ' },
-  
-  // South Africa
-  { code: 'WMAZ', name: 'SAFEX White Maize',     exchange: 'SAFEX', unit: 'Metric Ton', mtConversion: 1, months: 'HKNUZ' },
-  { code: 'YMAZ', name: 'SAFEX Yellow Maize',    exchange: 'SAFEX', unit: 'Metric Ton', mtConversion: 1, months: 'HKNUZ' },
-  { code: 'SUNS', name: 'SAFEX Sunflower Seed',  exchange: 'SAFEX', unit: 'Metric Ton', mtConversion: 1, months: 'HKNUZ' },
-  { code: 'SOYA', name: 'SAFEX Soybeans',        exchange: 'SAFEX', unit: 'Metric Ton', mtConversion: 1, months: 'HKNUZ' },
-  { code: 'WEAT', name: 'SAFEX Wheat',           exchange: 'SAFEX', unit: 'Metric Ton', mtConversion: 1, months: 'HKNUZ' },
+  // ── CBOT (CME Group) — Grains & Oilseeds ──
+  { code: 'S',   name: 'CBOT Soybeans',      exchange: 'CBOT', quoteUnit: 'cents/bushel',   divisor: 100, baseUnit: '$/bushel',     mtConversion: 36.7437, months: 'FHKNQUX' },
+  { code: 'SM',  name: 'CBOT Soybean Meal',   exchange: 'CBOT', quoteUnit: '$/short ton',   divisor: 1,   baseUnit: '$/short ton',  mtConversion: 1.10231, months: 'FHKNQUVZ' },
+  { code: 'BO',  name: 'CBOT Soybean Oil',    exchange: 'CBOT', quoteUnit: 'cents/lb',      divisor: 100, baseUnit: '$/lb',         mtConversion: 2204.62, months: 'FHKNQUVZ' },
+  { code: 'C',   name: 'CBOT Corn',           exchange: 'CBOT', quoteUnit: 'cents/bushel',   divisor: 100, baseUnit: '$/bushel',     mtConversion: 39.368,  months: 'HKNUZ' },
+  { code: 'W',   name: 'CBOT Wheat',          exchange: 'CBOT', quoteUnit: 'cents/bushel',   divisor: 100, baseUnit: '$/bushel',     mtConversion: 36.7437, months: 'HKNUZ' },
+  { code: 'O',   name: 'CBOT Oats',           exchange: 'CBOT', quoteUnit: 'cents/bushel',   divisor: 100, baseUnit: '$/bushel',     mtConversion: 68.8944, months: 'HKNUZ' },
+  { code: 'RR',  name: 'CBOT Rough Rice',     exchange: 'CBOT', quoteUnit: 'cents/cwt',      divisor: 100, baseUnit: '$/cwt',        mtConversion: 22.0462, months: 'FHKNUX' },
+
+  // ── ICE — Softs & Energy ──
+  { code: 'KC',  name: 'ICE Coffee (Arabica)', exchange: 'ICE', quoteUnit: 'cents/lb',       divisor: 100, baseUnit: '$/lb',         mtConversion: 2204.62, months: 'HKNUZ' },
+  { code: 'SB',  name: 'ICE Sugar #11',        exchange: 'ICE', quoteUnit: 'cents/lb',       divisor: 100, baseUnit: '$/lb',         mtConversion: 2204.62, months: 'HKNV' },
+  { code: 'CC',  name: 'ICE Cocoa',            exchange: 'ICE', quoteUnit: '$/MT',           divisor: 1,   baseUnit: '$/MT',         mtConversion: 1,       months: 'HKNUZ' },
+  { code: 'CT',  name: 'ICE Cotton #2',        exchange: 'ICE', quoteUnit: 'cents/lb',       divisor: 100, baseUnit: '$/lb',         mtConversion: 2204.62, months: 'HKNVZ' },
+  { code: 'OJ',  name: 'ICE Orange Juice',     exchange: 'ICE', quoteUnit: 'cents/lb',       divisor: 100, baseUnit: '$/lb',         mtConversion: 2204.62, months: 'FHKNUX' },
+  { code: 'CL',  name: 'ICE Brent Crude',      exchange: 'ICE', quoteUnit: '$/barrel',       divisor: 1,   baseUnit: '$/barrel',     mtConversion: 7.33,    months: 'All' },
+
+  // ── COMEX ──
+  { code: 'GC',  name: 'COMEX Gold',           exchange: 'COMEX', quoteUnit: '$/troy oz',    divisor: 1,   baseUnit: '$/troy oz',   mtConversion: 32150.7, months: 'GJMQVZ' },
+
+  // ── SAFEX (JSE) — South African ──
+  { code: 'WMAZ', name: 'SAFEX White Maize',    exchange: 'SAFEX', quoteUnit: 'ZAR/MT',      divisor: 1,   baseUnit: 'ZAR/MT',      mtConversion: 1,       months: 'HKNUZ' },
+  { code: 'YMAZ', name: 'SAFEX Yellow Maize',   exchange: 'SAFEX', quoteUnit: 'ZAR/MT',      divisor: 1,   baseUnit: 'ZAR/MT',      mtConversion: 1,       months: 'HKNUZ' },
+  { code: 'SUNS', name: 'SAFEX Sunflower',      exchange: 'SAFEX', quoteUnit: 'ZAR/MT',      divisor: 1,   baseUnit: 'ZAR/MT',      mtConversion: 1,       months: 'HKNUZ' },
+  { code: 'SOYA', name: 'SAFEX Soybeans',       exchange: 'SAFEX', quoteUnit: 'ZAR/MT',      divisor: 1,   baseUnit: 'ZAR/MT',      mtConversion: 1,       months: 'HKNUZ' },
+  { code: 'WEAT', name: 'SAFEX Wheat',          exchange: 'SAFEX', quoteUnit: 'ZAR/MT',      divisor: 1,   baseUnit: 'ZAR/MT',      mtConversion: 1,       months: 'HKNUZ' },
+
+  // ── Palm Oil ──
+  { code: 'FCPO', name: 'BMD Crude Palm Oil',   exchange: 'BMD',   quoteUnit: 'MYR/MT',      divisor: 1,   baseUnit: 'MYR/MT',      mtConversion: 1,       months: 'All' },
 ];
 
-// Month codes → month names
-const MONTH_MAP = {
-  F: { name: 'January', num: 1 },   G: { name: 'February', num: 2 },
-  H: { name: 'March', num: 3 },     J: { name: 'April', num: 4 },
-  K: { name: 'May', num: 5 },       M: { name: 'June', num: 6 },
-  N: { name: 'July', num: 7 },      Q: { name: 'August', num: 8 },
-  U: { name: 'September', num: 9 }, V: { name: 'October', num: 10 },
-  X: { name: 'November', num: 11 }, Z: { name: 'December', num: 12 },
-};
+// ── Month code mapping ──
+const MONTH_CODES = { F: 'Jan', G: 'Feb', H: 'Mar', J: 'Apr', K: 'May', M: 'Jun', N: 'Jul', Q: 'Aug', U: 'Sep', V: 'Oct', X: 'Nov', Z: 'Dec' };
+const MONTH_NAMES = { F: 'January', G: 'February', H: 'March', J: 'April', K: 'May', M: 'June', N: 'July', Q: 'August', U: 'September', V: 'October', X: 'November', Z: 'December' };
 
 /**
- * Generate available contract months for a futures contract
- * e.g., 'SN6' = Soybeans July 2026, 'SMN6' = Soybean Meal July 2026
+ * Get available contract months for a given code
  */
-export function getAvailableContracts(contractCode, yearsAhead = 2) {
+export function getAvailableContracts(contractCode) {
   const contract = FUTURES_CONTRACTS.find(c => c.code === contractCode);
   if (!contract) return [];
-  
+
   const now = new Date();
   const currentYear = now.getFullYear();
   const results = [];
-  
-  for (let y = currentYear; y <= currentYear + yearsAhead; y++) {
-    const yearDigit = y % 10;
-    for (const monthCode of contract.months) {
-      const month = MONTH_MAP[monthCode];
-      if (!month) continue;
-      
-      // Skip past months in current year
-      if (y === currentYear && month.num < now.getMonth() + 1) continue;
-      
+
+  for (let yearOffset = 0; yearOffset <= 2; yearOffset++) {
+    const year = currentYear + yearOffset;
+    const yearSuffix = year % 10;
+    const months = contract.months === 'All'
+      ? 'FGHJKMNQUVXZ'
+      : contract.months;
+
+    for (const mc of months) {
+      const symbol = `${contract.code}${mc}${yearSuffix}`;
       results.push({
-        symbol: `${contractCode}${monthCode}${yearDigit}`,
-        contractCode,
-        monthCode,
-        monthName: month.name,
-        year: y,
-        yearDigit,
-        label: `${contract.name} ${month.name} ${y}`,
-        shortLabel: `${monthCode}${yearDigit} (${month.name.slice(0, 3)} ${y})`,
+        symbol,
+        monthCode: mc,
+        monthName: MONTH_NAMES[mc],
+        shortLabel: `${MONTH_CODES[mc]} ${year}`,
+        year,
       });
     }
   }
-  
   return results;
 }
 
 /**
- * Calculate flat price from basis + futures
- * @param {number} futuresPrice   - Futures settlement/close price
- * @param {number} basis          - Basis (premium/discount) in contract units
- * @param {string} contractCode   - e.g., 'S', 'SM'
- * @param {string} targetUnit     - 'MT' for metric ton (default)
- * @returns {object} { flatPrice, pricePerMT, calculation }
+ * Calculate flat price in $/MT from futures quote + basis
+ *
+ * @param {number} futuresQuote  — Price as quoted on exchange (e.g. 1150 cents/bushel or 350 $/short ton)
+ * @param {number} basis         — Basis in base unit (e.g. 2.35 $/bushel)
+ * @param {string} contractCode  — Contract code (e.g. 'S' for CBOT Soybeans)
+ * @param {boolean} quoteInBaseUnit — If true, futures is already in base unit (e.g. 11.50 $/bushel, not 1150 cents)
+ * @returns {{ pricePerMT, formula, details }}
  */
-export function calculateFlatPrice(futuresPrice, basis, contractCode, targetUnit = 'MT') {
+export function calculateFlatPrice(futuresQuote, basis, contractCode, quoteInBaseUnit = false) {
   const contract = FUTURES_CONTRACTS.find(c => c.code === contractCode);
-  if (!contract) return { error: 'Unknown contract code' };
-  
-  const priceInContractUnit = futuresPrice + basis;
-  const pricePerMT = priceInContractUnit * contract.mtConversion;
-  
+  if (!contract) return { pricePerMT: 0, formula: 'Unknown contract', details: {} };
+
+  // Step 1: Convert futures quote to base unit (e.g. cents/bushel → $/bushel)
+  const futuresInBase = quoteInBaseUnit ? futuresQuote : futuresQuote / contract.divisor;
+
+  // Step 2: Add basis (both now in same unit, e.g. $/bushel)
+  const priceInBase = futuresInBase + basis;
+
+  // Step 3: Convert to $/MT using the MT conversion factor
+  const pricePerMT = priceInBase * contract.mtConversion;
+
+  const formula = contract.divisor === 1
+    ? `(${futuresQuote} + ${basis}) × ${contract.mtConversion} = ${pricePerMT.toFixed(2)} $/MT`
+    : `(${futuresQuote}/${contract.divisor} + ${basis}) × ${contract.mtConversion} = (${futuresInBase.toFixed(4)} + ${basis}) × ${contract.mtConversion} = ${pricePerMT.toFixed(2)} $/MT`;
+
   return {
-    futuresPrice,
-    basis,
-    priceInContractUnit,
-    contractUnit: contract.unit,
-    conversionFactor: contract.mtConversion,
     pricePerMT: Math.round(pricePerMT * 100) / 100,
-    calculation: `(${futuresPrice} + ${basis}) × ${contract.mtConversion} = ${pricePerMT.toFixed(2)} USD/MT`,
+    formula,
+    details: {
+      futuresQuote,
+      futuresInBase: Math.round(futuresInBase * 10000) / 10000,
+      basis,
+      priceInBase: Math.round(priceInBase * 10000) / 10000,
+      quoteUnit: contract.quoteUnit,
+      baseUnit: contract.baseUnit,
+      mtConversion: contract.mtConversion,
+      divisor: contract.divisor,
+    },
   };
 }
 
 /**
- * Calculate rolled price when switching contract months
- * @param {number} originalFutures - Original contract price
- * @param {number} rollSpread      - Spread between old and new contract (new - old)
- * @param {number} basis           - Original basis
- * @returns {object} Revised pricing
+ * Calculate rolled price
  */
-export function calculateRollPrice(originalFutures, rollSpread, basis, contractCode) {
-  const revisedFutures = originalFutures + rollSpread;
-  const revisedBasis = basis; // Basis typically stays the same
-  
+export function calculateRollPrice(originalFutures, rollSpread, basis, contractCode, quoteInBaseUnit = false) {
+  const contract = FUTURES_CONTRACTS.find(c => c.code === contractCode);
+  if (!contract) return { pricePerMT: 0 };
+
+  // Roll spread is in the same unit as the base unit (e.g. $/bushel)
+  // The new futures = original futures (in base) + spread
+  const originalInBase = quoteInBaseUnit ? originalFutures : originalFutures / contract.divisor;
+  const rolledInBase = originalInBase + rollSpread;
+
+  // New basis absorbs the roll: newBasis = oldBasis - rollSpread
+  const newBasis = basis - rollSpread;
+  const priceInBase = rolledInBase + newBasis;
+  const pricePerMT = priceInBase * contract.mtConversion;
+
   return {
-    originalFutures,
-    rollSpread,
-    revisedFutures,
-    basis: revisedBasis,
-    ...calculateFlatPrice(revisedFutures, revisedBasis, contractCode),
+    pricePerMT: Math.round(pricePerMT * 100) / 100,
+    rolledFutures: Math.round(rolledInBase * 10000) / 10000,
+    newBasis: Math.round(newBasis * 10000) / 10000,
+    formula: `Rolled: (${rolledInBase.toFixed(4)} + ${newBasis.toFixed(4)}) × ${contract.mtConversion} = ${pricePerMT.toFixed(2)} $/MT`,
   };
 }
 
 /**
- * Unit conversion utilities
+ * Detect if a fetched price is likely in the exchange quote unit or base unit
+ * e.g. CBOT Soybeans: if price > 100, it's probably cents/bushel; if < 30, it's $/bushel
  */
-export const UNIT_CONVERSIONS = {
-  'Bushel_Soybean_to_MT': 36.7437,
-  'Bushel_Corn_to_MT': 39.3680,
-  'Bushel_Wheat_to_MT': 36.7437,
-  'ShortTon_to_MT': 1.1023,
-  'LongTon_to_MT': 1.0160,
-  'Pound_to_MT': 2204.62,
-  'CWT_to_MT': 22.0462,
-  'Barrel_to_MT': 7.33,
-};
+export function detectPriceUnit(price, contractCode) {
+  const contract = FUTURES_CONTRACTS.find(c => c.code === contractCode);
+  if (!contract || contract.divisor === 1) return { isQuoteUnit: true, isBaseUnit: true, confidence: 'high' };
 
-export function convertToMT(value, fromUnit, commodity = '') {
-  if (fromUnit === 'Metric Ton' || fromUnit === 'MT') return value;
-  
-  const key = commodity
-    ? `${fromUnit}_${commodity}_to_MT`
-    : `${fromUnit}_to_MT`;
-  
-  const factor = UNIT_CONVERSIONS[key] || UNIT_CONVERSIONS[`${fromUnit}_to_MT`];
-  if (!factor) return null;
-  
-  return Math.round(value * factor * 100) / 100;
+  // For cents-based contracts: if price > 50, it's likely in cents; if < 50, likely in dollars
+  if (contract.divisor === 100) {
+    if (price > 50) return { isQuoteUnit: true, isBaseUnit: false, confidence: 'high', inBase: price / 100 };
+    if (price < 30) return { isQuoteUnit: false, isBaseUnit: true, confidence: 'high', inBase: price };
+    return { isQuoteUnit: true, isBaseUnit: false, confidence: 'medium', inBase: price / 100 };
+  }
+
+  return { isQuoteUnit: true, isBaseUnit: true, confidence: 'low' };
 }
