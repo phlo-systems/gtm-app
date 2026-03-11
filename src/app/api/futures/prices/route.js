@@ -1,6 +1,6 @@
 /**
  * POST /api/futures/prices
- * AI-powered futures price lookup.
+ * AI-powered futures price lookup WITH WEB SEARCH for real-time data.
  * Body: { contract, month, year, code }
  */
 export async function POST(request) {
@@ -12,14 +12,16 @@ export async function POST(request) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return Response.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 });
 
-    const prompt = `You are a commodity futures market data specialist. Provide the most recent available price data for:
+    const prompt = `Search the web for the latest futures price data for:
 
 Contract: ${contract}
 Month: ${month || 'front month'}
 Year: ${year || new Date().getFullYear()}
 Symbol: ${code || 'N/A'}
 
-Respond ONLY with a JSON object (no markdown, no backticks):
+Search for the most recent settlement price, closing price, and trading data from sources like CME Group, barchart.com, investing.com, or tradingeconomics.com.
+
+After searching, respond ONLY with a JSON object (no markdown, no backticks):
 {
   "contract": "${contract}",
   "symbol": "${code || ''}",
@@ -41,30 +43,48 @@ Respond ONLY with a JSON object (no markdown, no backticks):
   },
   "change": 0,
   "changePct": 0,
-  "volume": "approximate daily volume",
-  "openInterest": "approximate OI",
+  "volume": "daily volume",
+  "openInterest": "open interest",
   "priceDate": "YYYY-MM-DD",
   "contractExpiry": "first notice / last trade date",
   "marketStatus": "open/closed",
+  "source": "where you found this data",
   "notes": "any caveats about accuracy or recency",
   "confidence": "high/medium/low"
 }
 
-Use actual recent prices. If the specific month isn't trading yet, provide nearest month and note it.`;
+Use the ACTUAL prices you find from today's web search. Do NOT use training data.`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1500, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1500,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: prompt }],
+      }),
     });
 
     if (!response.ok) return Response.json({ error: `AI error: ${response.status}` }, { status: 502 });
     const aiResponse = await response.json();
-    const rawText = aiResponse.content?.[0]?.text || '';
-    let result;
-    try { const m = rawText.match(/\{[\s\S]*\}/); result = m ? JSON.parse(m[0]) : null; } catch (e) { result = null; }
 
-    return Response.json({ result: result || { rawResponse: rawText }, disclaimer: 'AI-generated. Verify with broker before trading.' });
+    // Extract text from all content blocks (web search returns multiple blocks)
+    const textParts = (aiResponse.content || [])
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n');
+
+    let result;
+    try {
+      const m = textParts.match(/\{[\s\S]*\}/);
+      result = m ? JSON.parse(m[0]) : null;
+    } catch (e) { result = null; }
+
+    return Response.json({
+      result: result || { rawResponse: textParts },
+      disclaimer: 'Prices sourced via web search. Verify with broker before trading.',
+    });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
