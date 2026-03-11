@@ -42,6 +42,8 @@ const TRADER_NAV = [
   { key: "calculator", icon: "\u25A8", label: "Container Calc" },
   { key: "masterdata", icon: "\u25C7", label: "Master Data" },
   { key: "team", icon: "\u25CB", label: "Team" },
+    { key: "agent", icon: "\u{1F4BC}", label: "Agent" },
+    { key: "financer", icon: "\u{1F3E6}", label: "Finance" },
 ];
 
 const FORWARDER_NAV = [
