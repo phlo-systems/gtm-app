@@ -125,6 +125,8 @@ export default function GTMApp() {
         case "deals":     return <DealsList deals={deals} onOpenDeal={openDeal} onNewDeal={newDeal} />;
         case "precalc":   return <PreCalcScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
         case "customs": return <CustomsIntelligence S={S} />;
+      case "agent": return <AgentDashboard deals={deals} S={S} />;
+      case "financer": return <FinancerDashboard deals={deals} S={S} />;
         case "postcalc":  return <Placeholder title="Post-Trade Analytics" />;
         case "calculator": return <ContainerCalculator />;
         case "masterdata": return <MasterDataScreen role="trader" />;
