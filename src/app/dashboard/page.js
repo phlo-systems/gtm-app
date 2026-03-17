@@ -1,50 +1,22 @@
-/**
- * GTM DASHBOARD — Main App Shell & Router
- * 
- * This is the top-level page that:
- *   1. Handles auth (redirect to login if not authenticated)
- *   2. Loads deals/jobs from the API
- *   3. Routes to the correct screen based on active page + role
- * 
- * All UI components are imported from /components/.
- * This file should stay thin — add new screens by creating
- * components, not by adding code here.
- * 
- * File structure:
- *   /components/shared/     → Sidebar, Loading, styles
- *   /components/common/     → DashboardView (both roles)
- *   /components/trader/     → DealsList, PreCalcScreen
- *   /components/forwarder/  → JobsList, ForwarderJobScreen
- */
 'use client'
-
 import CustomsIntelligence from '@/components/common/CustomsIntelligence';
 import FuturesPricingWidget from '@/components/trader/FuturesPricingWidget';
 import DealExtendedFields from '@/components/trader/DealExtendedFields';
 import M2MWidget from '@/components/trader/M2MWidget';
 import AgentDashboard from '@/components/agent/AgentDashboard';
 import FinancerDashboard from '@/components/financer/FinancerDashboard';
+import ManagementFeesSettings from '@/components/admin/ManagementFeesSettings';
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { useRouter } from "next/navigation";
-
-// Shared
 import { S } from "@/components/shared/styles";
 import Sidebar from "@/components/shared/Sidebar";
 import Loading from "@/components/shared/Loading";
-
-// Common (both roles)
 import DashboardView from "@/components/common/DashboardView";
-
-// Trader screens
 import DealsList from "@/components/trader/DealsList";
 import PreCalcScreen from "@/components/trader/PreCalcScreen";
-
-// Forwarder screens
 import ForwarderJobsList from "@/components/forwarder/JobsList";
 import ForwarderJobScreen from "@/components/forwarder/ForwarderJobScreen";
-
-// Common screens (both roles)
 import MasterDataScreen from "@/components/common/MasterDataScreen";
 import TeamScreen from "@/components/common/TeamScreen";
 import ContainerCalculator from "@/components/common/ContainerCalculator";
@@ -60,7 +32,6 @@ export default function GTMApp() {
   const supabase = createClient();
   const router = useRouter();
 
-  // ── Init: check auth & load data ──
   useEffect(() => {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -85,37 +56,34 @@ export default function GTMApp() {
     router.refresh();
   };
 
-  // ── Navigation handlers ──
   const openDeal = (deal) => { setCurrentDeal(deal); setPage("precalc"); };
-  const newDeal = () => { setCurrentDeal(null); setPage("precalc"); };
-  const openJob = (deal) => { setCurrentDeal(deal); setPage("newjob"); };
-  const newJob = () => { setCurrentDeal(null); setPage("newjob"); };
+  const newDeal  = ()     => { setCurrentDeal(null);  setPage("precalc"); };
+  const openJob  = (deal) => { setCurrentDeal(deal); setPage("newjob"); };
+  const newJob   = ()     => { setCurrentDeal(null);  setPage("newjob"); };
+
   const handleSaved = (saved) => { setCurrentDeal(saved); loadDeals(); };
-  const goBack = () => { setCurrentDeal(null); setPage(role === "forwarder" ? "jobs" : "deals"); loadDeals(); };
-
-  const handleRoleChange = (r) => {
-    setRole(r);
+  const goBack = () => {
     setCurrentDeal(null);
-    setPage("dashboard");
+    setPage(role === "forwarder" ? "jobs" : "deals");
+    loadDeals();
   };
+  const handleRoleChange = (r) => { setRole(r); setCurrentDeal(null); setPage("dashboard"); };
 
-  // ── Loading state ──
   if (loading) return <div style={S.page}><Loading text="Loading GTM..." /></div>;
 
-  // ── Page router ──
   const renderPage = () => {
     if (role === "forwarder") {
       switch (page) {
         case "dashboard": return <DashboardView deals={deals} onNav={(p, d) => d ? openJob(d) : setPage(p)} role="forwarder" />;
-      case "m2m": return <M2MWidget S={S} />;
+        case "m2m":       return <M2MWidget S={S} />;
         case "jobs":      return <ForwarderJobsList deals={deals} onOpenJob={openJob} onNewJob={newJob} />;
         case "newjob":    return <ForwarderJobScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
-        case "customs": return <CustomsIntelligence S={S} />;
-      case "agent": return <AgentDashboard deals={deals} S={S} />;
-      case "financer": return <FinancerDashboard deals={deals} S={S} />;
+        case "customs":   return <CustomsIntelligence S={S} />;
+        case "agent":     return <AgentDashboard deals={deals} S={S} />;
+        case "financer":  return <FinancerDashboard deals={deals} S={S} />;
         case "tracking":  return <Placeholder title="Shipment Tracking" />;
-        case "calculator": return <ContainerCalculator />;
-        case "masterdata": return <MasterDataScreen role="forwarder" />;
+        case "calculator":return <ContainerCalculator />;
+        case "masterdata":return <MasterDataScreen role="forwarder" />;
         case "team":      return <TeamScreen />;
         default:          return <DashboardView deals={deals} onNav={setPage} role="forwarder" />;
       }
@@ -124,13 +92,14 @@ export default function GTMApp() {
         case "dashboard": return <DashboardView deals={deals} onNav={(p, d) => d ? openDeal(d) : setPage(p)} role="trader" />;
         case "deals":     return <DealsList deals={deals} onOpenDeal={openDeal} onNewDeal={newDeal} />;
         case "precalc":   return <PreCalcScreen deal={currentDeal} onBack={goBack} onSaved={handleSaved} />;
-        case "customs": return <CustomsIntelligence S={S} />;
-      case "agent": return <AgentDashboard deals={deals} S={S} />;
-      case "financer": return <FinancerDashboard deals={deals} S={S} />;
+        case "customs":   return <CustomsIntelligence S={S} />;
+        case "agent":     return <AgentDashboard deals={deals} S={S} />;
+        case "financer":  return <FinancerDashboard deals={deals} S={S} />;
         case "postcalc":  return <Placeholder title="Post-Trade Analytics" />;
-        case "calculator": return <ContainerCalculator />;
-        case "masterdata": return <MasterDataScreen role="trader" />;
+        case "calculator":return <ContainerCalculator />;
+        case "masterdata":return <MasterDataScreen role="trader" />;
         case "team":      return <TeamScreen />;
+        case "settings":  return <ManagementFeesSettings S={S} />;
         default:          return <DashboardView deals={deals} onNav={setPage} role="trader" />;
       }
     }
@@ -144,12 +113,11 @@ export default function GTMApp() {
   );
 }
 
-// Simple placeholder for screens that haven't been built yet
 function Placeholder({ title }) {
   return (
     <div style={S.card}>
       <div style={{ textAlign: "center", padding: 40, color: "#888" }}>
-        {title} {"\u2014"} Coming Soon
+        {title} — Coming Soon
       </div>
     </div>
   );

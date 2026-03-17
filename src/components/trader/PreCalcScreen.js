@@ -830,41 +830,7 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
                 {!deal?.id && <div style={{ fontSize: 12, color: '#AAA' }}>Save the deal first.</div>}
               </div>
             ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>Cost Matrix</div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 11, color: '#888' }}>Total COS</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: '#1B4332' }}>${(costMatrix.total_cost || 0).toLocaleString()}</div>
-                  </div>
-                </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...S.th, width: 40 }}>Blk</th>
-                      <th style={S.th}>Cost Line</th>
-                      <th style={S.th}>Type</th>
-                      <th style={{ ...S.th, textAlign: 'right' }}>Amount</th>
-                      <th style={S.th}>Resp.</th>
-                      <th style={{ ...S.th, width: 50 }}>Src</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(costMatrix.cost_lines || [])
-                      .sort((a, b) => a.sort_order - b.sort_order)
-                      .map((c, i) => (
-                        <tr key={i} style={{ background: c.source === 'voyage' ? '#F0FFF4' : 'transparent' }}>
-                          <td style={{ ...S.td, fontWeight: 700, color: c.block === 'A' ? '#1B7A43' : c.block === 'B' ? '#D4A017' : '#6B2D5B' }}>{c.block}</td>
-                          <td style={{ ...S.td, fontWeight: c.block === 'A' ? 700 : 400 }}>{c.line_item}</td>
-                          <td style={S.td}><span style={S.badge(c.cost_type === 'base' ? '#1B7A43' : c.cost_type === 'incoterm_gap' ? '#D4A017' : '#6B2D5B')}>{c.cost_type.replace('_', ' ')}</span></td>
-                          <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace' }}>${(c.amount || 0).toLocaleString()}</td>
-                          <td style={S.td}>{c.responsibility}</td>
-                          <td style={S.td}>{c.source === 'voyage' ? <span style={S.badge('#1B7A43')}>🚢</span> : ''}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </>
+              <COSTable costMatrix={costMatrix} S={S} />
             )}
           </div>
         </div>
@@ -874,37 +840,250 @@ export default function PreCalcScreen({ deal, onBack, onSaved }) {
           STEP 3 — FEASIBILITY  (unchanged)
           ════════════════════════════════════════════════════════════════ */}
       {step === 3 && (
-        <div style={S.card}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Feasibility</div>
-          {costMatrix ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              <div>
-                {[
-                  { l: 'Supplier (A)', v: (costMatrix.cost_lines || []).filter(l => l.block === 'A').reduce((s, l) => s + l.amount, 0) },
-                  { l: 'Incoterm Gap (B)', v: (costMatrix.cost_lines || []).filter(l => l.block === 'B').reduce((s, l) => s + l.amount, 0) },
-                  { l: 'Business Charges (C)', v: (costMatrix.cost_lines || []).filter(l => l.block === 'C').reduce((s, l) => s + l.amount, 0) },
-                  { l: 'Total COS', v: costMatrix.total_cost || 0, bold: true },
-                ].map((r, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: r.bold ? '2px solid #1B4332' : '1px solid #F0EDE6' }}>
-                    <span style={{ fontSize: 13, fontWeight: r.bold ? 700 : 400 }}>{r.l}</span>
-                    <span style={{ fontFamily: 'monospace', fontWeight: r.bold ? 800 : 600 }}>${r.v.toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{ padding: 16, background: (costMatrix.gross_margin_pct || 0) >= 8 ? '#F0FFF4' : '#FFF5F5', borderRadius: 8, border: '1px solid ' + ((costMatrix.gross_margin_pct || 0) >= 8 ? '#C6E6D0' : '#E6C6C6') }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: (costMatrix.gross_margin_pct || 0) >= 8 ? '#1B7A43' : '#C62828' }}>
-                  {(costMatrix.gross_margin_pct || 0).toFixed(1)}%
-                </div>
-                <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                  {(costMatrix.gross_margin_pct || 0) >= 8 ? '✓ Margin check passed' : '✗ Below threshold (8%)'}
-                </div>
+        <FeasibilityView costMatrix={costMatrix} S={S} />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COSTable — Step 2 full cost matrix display
+// ─────────────────────────────────────────────────────────────────────────────
+function COSTable({ costMatrix, S }) {
+  const lines = (costMatrix.cost_lines || []).sort((a, b) => a.sort_order - b.sort_order);
+  const sum = costMatrix.summary || {};
+
+  const blockColor = (block) =>
+    block === 'A' ? '#1B7A43' :
+    block === 'B' ? '#B8860B' :
+    block?.startsWith('C') ? '#6B2D5B' : '#888';
+
+  const blockBg = (block) =>
+    block === 'A' ? '#F0FFF4' :
+    block === 'B' ? '#FFFBF0' :
+    block?.startsWith('C') ? '#FAF0F8' : 'transparent';
+
+  const fmtAmt = (n) =>
+    (n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Group separators
+  const prevBlock = (i) => i > 0 ? lines[i - 1].block : null;
+  const isNewSection = (i) => {
+    if (i === 0) return false;
+    const cur = lines[i].block;
+    const prev = lines[i - 1].block;
+    return cur !== prev && (cur === 'B' || cur === 'C1' || cur === 'C7');
+  };
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>COS — Cost Matrix</div>
+        <div style={{ display: 'flex', gap: 24 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>Selling Price / Container</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: '#1B4332' }}>
+              ${fmtAmt(costMatrix.selling_price || costMatrix.total_cost)}
+            </div>
+          </div>
+          {sum.perCaseSellingPrice > 0 && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>Per Case</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#1B4332' }}>
+                ${fmtAmt(sum.perCaseSellingPrice)}
               </div>
             </div>
-          ) : (
-            <div style={{ textAlign: 'center', padding: 32, color: '#888' }}>Generate a cost matrix first.</div>
           )}
         </div>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: '#F5F7F0' }}>
+            <th style={{ ...S.th, width: 36, textAlign: 'center' }}>Blk</th>
+            <th style={S.th}>Cost Line</th>
+            <th style={{ ...S.th, width: 90 }}>Basis</th>
+            <th style={{ ...S.th, textAlign: 'right', width: 130 }}>/ Container</th>
+            <th style={{ ...S.th, textAlign: 'right', width: 100 }}>/ Case</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((c, i) => {
+            const isMgmtFee = c.block === 'C7' || c.block === 'C8';
+            const isSubtotal = false;
+            return (
+              <>
+                {/* Section header rows */}
+                {c.block === 'B' && prevBlock(i) === 'A' && (
+                  <tr key={`sep-b-${i}`}>
+                    <td colSpan={5} style={{ padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#B8860B', textTransform: 'uppercase', letterSpacing: 0.8, background: '#FFFBF0', borderTop: '2px solid #FFD54F' }}>
+                      Block B — Incoterm Gap Costs ({costMatrix.buy_incoterm || '?'} → {costMatrix.sell_incoterm || '?'})
+                    </td>
+                  </tr>
+                )}
+                {c.block === 'C1' && !lines[i - 1]?.block?.startsWith('C') && (
+                  <tr key={`sep-c-${i}`}>
+                    <td colSpan={5} style={{ padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#6B2D5B', textTransform: 'uppercase', letterSpacing: 0.8, background: '#FAF0F8', borderTop: '2px solid #D4A0C8' }}>
+                      Block C — Management Fees (always applied)
+                    </td>
+                  </tr>
+                )}
+                {c.block === 'C7' && lines[i - 1]?.block !== 'C7' && (
+                  <SubtotalRow key={`sub-before-${i}`} label="Subtotal before management" amount={sum.subtotalBeforeMgmt} perCase={sum.casesPerContainer > 0 ? (sum.subtotalBeforeMgmt / sum.casesPerContainer) : 0} fmtAmt={fmtAmt} />
+                )}
+
+                <tr key={i} style={{ background: blockBg(c.block) }}>
+                  <td style={{ ...S.td, textAlign: 'center', fontWeight: 700, color: blockColor(c.block), fontSize: 11 }}>{c.block}</td>
+                  <td style={{ ...S.td, fontWeight: c.block === 'A' ? 700 : 400 }}>
+                    {c.line_item}
+                    {c.note && <span style={{ fontSize: 10, color: '#AAA', marginLeft: 6 }}>{c.note}</span>}
+                    {c.editable && <span style={{ fontSize: 10, color: '#B8860B', marginLeft: 6 }}>● edit in voyage search</span>}
+                  </td>
+                  <td style={{ ...S.td, fontSize: 11, color: '#888' }}>{c.source || ''}</td>
+                  <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontWeight: isMgmtFee ? 700 : 400, color: isMgmtFee ? '#6B2D5B' : '#333' }}>
+                    ${fmtAmt(c.amount)}
+                  </td>
+                  <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', color: '#888' }}>
+                    {c.per_case != null ? `$${fmtAmt(c.per_case)}` : '—'}
+                  </td>
+                </tr>
+              </>
+            );
+          })}
+
+          {/* Trading Margin row */}
+          {sum.tradingMargin != null && (
+            <SubtotalRow label="Total Trading Margin" amount={sum.tradingMargin} perCase={sum.casesPerContainer > 0 ? (sum.tradingMargin / sum.casesPerContainer) : 0} fmtAmt={fmtAmt} highlight />
+          )}
+
+          {/* Selling price row */}
+          {(costMatrix.selling_price || sum.sellingPrice) && (
+            <tr style={{ background: '#E8F4EF', borderTop: '2px solid #1B4332' }}>
+              <td colSpan={3} style={{ ...S.td, fontWeight: 800, fontSize: 14, color: '#1B4332' }}>OCapital Selling Price</td>
+              <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, fontSize: 16, color: '#1B4332' }}>
+                ${fmtAmt(costMatrix.selling_price || sum.sellingPrice)}
+              </td>
+              <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#1B4332' }}>
+                {sum.perCaseSellingPrice ? `$${fmtAmt(sum.perCaseSellingPrice)}` : '—'}
+              </td>
+            </tr>
+          )}
+
+          {/* Trader margin splits */}
+          {sum.buyingTraderMargin != null && (
+            <>
+              <tr style={{ background: '#F5F7F0' }}>
+                <td colSpan={3} style={{ ...S.td, fontSize: 11, color: '#666', paddingLeft: 16 }}>↳ Buying Trader Margin</td>
+                <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, color: '#666' }}>${fmtAmt(sum.buyingTraderMargin)}</td>
+                <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, color: '#666' }}>
+                  {sum.casesPerContainer > 0 ? `$${fmtAmt(sum.buyingTraderMargin / sum.casesPerContainer)}` : '—'}
+                </td>
+              </tr>
+              <tr style={{ background: '#F5F7F0' }}>
+                <td colSpan={3} style={{ ...S.td, fontSize: 11, color: '#666', paddingLeft: 16 }}>↳ Selling Trader Margin</td>
+                <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, color: '#666' }}>${fmtAmt(sum.sellingTraderMargin)}</td>
+                <td style={{ ...S.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, color: '#666' }}>
+                  {sum.casesPerContainer > 0 ? `$${fmtAmt(sum.sellingTraderMargin / sum.casesPerContainer)}` : '—'}
+                </td>
+              </tr>
+            </>
+          )}
+        </tbody>
+      </table>
+
+      {sum.casesPerContainer > 0 && (
+        <div style={{ marginTop: 8, fontSize: 11, color: '#AAA', textAlign: 'right' }}>
+          {sum.casesPerContainer.toLocaleString()} cases / container
+        </div>
       )}
+    </>
+  );
+}
+
+function SubtotalRow({ label, amount, perCase, fmtAmt, highlight }) {
+  return (
+    <tr style={{ background: highlight ? '#FFF8E1' : '#F0EDE6', borderTop: '1px solid #D4C8B8' }}>
+      <td colSpan={3} style={{ padding: '6px 8px', fontWeight: 700, fontSize: 12, color: highlight ? '#B8860B' : '#444' }}>{label}</td>
+      <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: highlight ? '#B8860B' : '#333' }}>${fmtAmt(amount)}</td>
+      <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'monospace', color: '#888' }}>{perCase > 0 ? `$${fmtAmt(perCase)}` : '—'}</td>
+    </tr>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FeasibilityView — Step 3
+// ─────────────────────────────────────────────────────────────────────────────
+function FeasibilityView({ costMatrix, S }) {
+  if (!costMatrix) {
+    return (
+      <div style={S.card}>
+        <div style={{ textAlign: 'center', padding: 32, color: '#888' }}>Generate a cost matrix first.</div>
+      </div>
+    );
+  }
+
+  const sum = costMatrix.summary || {};
+  const margin = costMatrix.gross_margin_pct || 0;
+  const passed = margin >= 5;
+  const fmtAmt = (n) => (n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const rows = [
+    { label: 'Block A — Supplier Cost', v: sum.subtotalA, sub: true },
+    { label: 'Block B — Incoterm Gap', v: sum.subtotalB, sub: true },
+    { label: 'Block C — Management Fees', v: (sum.subtotalBeforeMgmt || 0) - (sum.subtotalA || 0) - (sum.subtotalB || 0), sub: true },
+    { label: 'Total Trading Margin', v: sum.tradingMargin, sub: true, accent: '#B8860B' },
+    { label: 'OCapital Selling Price', v: costMatrix.selling_price || sum.sellingPrice, bold: true },
+  ];
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      {/* Cost breakdown */}
+      <div style={S.card}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Cost Breakdown</div>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: r.bold ? '2px solid #1B4332' : '1px solid #F0EDE6' }}>
+            <span style={{ fontSize: 13, fontWeight: r.bold ? 700 : 400, color: r.accent || 'inherit' }}>{r.label}</span>
+            <span style={{ fontFamily: 'monospace', fontWeight: r.bold ? 800 : 600, color: r.accent || (r.bold ? '#1B4332' : 'inherit') }}>${fmtAmt(r.v)}</span>
+          </div>
+        ))}
+        {sum.casesPerContainer > 0 && (
+          <div style={{ fontSize: 11, color: '#AAA', marginTop: 8, textAlign: 'right' }}>
+            Per case: ${fmtAmt(sum.perCaseSellingPrice)}
+          </div>
+        )}
+      </div>
+
+      {/* Go / No-go */}
+      <div>
+        <div style={{ padding: 20, background: passed ? '#F0FFF4' : '#FFF5F5', borderRadius: 10, border: `1px solid ${passed ? '#C6E6D0' : '#E6C6C6'}`, marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Trading Margin</div>
+          <div style={{ fontSize: 32, fontWeight: 800, color: passed ? '#1B7A43' : '#C62828' }}>
+            {(sum.tradingMarginPct || 0).toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: passed ? '#1B7A43' : '#C62828', marginTop: 4, fontWeight: 600 }}>
+            {passed ? '✓ Feasibility check passed' : '✗ Below minimum threshold (5%)'}
+          </div>
+        </div>
+
+        {/* Trader splits */}
+        {sum.buyingTraderMargin != null && (
+          <div style={S.card}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10, color: '#6B2D5B' }}>Trader Margin Allocation</div>
+            {[
+              { label: 'Buying Trader', v: sum.buyingTraderMargin, pct: sum.tradingMargin > 0 ? ((sum.buyingTraderMargin / sum.tradingMargin) * 100).toFixed(0) : 0 },
+              { label: 'Selling Trader', v: sum.sellingTraderMargin, pct: sum.tradingMargin > 0 ? ((sum.sellingTraderMargin / sum.tradingMargin) * 100).toFixed(0) : 0 },
+            ].map((r, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #F0EDE6' }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{r.label}</div>
+                  <div style={{ fontSize: 10, color: '#888' }}>{r.pct}% of trading margin</div>
+                </div>
+                <div style={{ fontFamily: 'monospace', fontWeight: 700 }}>${fmtAmt(r.v)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
