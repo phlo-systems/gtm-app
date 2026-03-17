@@ -7,7 +7,7 @@
  *
  * Usage:
  *   import { computeCOS, DEFAULT_POLICY } from '@/lib/cos-engine';
- *   const result = computeCOS(deal, policyDefaults, existingAmounts);
+ *   const result = computeCOS(deal, policyDefaults, existingAmouns);
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -270,11 +270,11 @@ export function cosResultToDbLines(cosResult, matrixId) {
     block:          line.block,
     line_item:      line.label,
     cost_type:      line.cost_type,
-    calc_type:      'formula',
+    calc_type:      'calculated',
     amount:         line.amount,
     amount_per_unit:line.amount_per_case,
     currency:       line.currency,
-    source:         line.source,
+    source:           (line.source === 'policy' || line.source === 'formula') ? 'calculated' : (line.source || 'manual'),
     responsibility: line.responsibility,
     sort_order:     line.sort_order,
     is_active:      line.is_active,
